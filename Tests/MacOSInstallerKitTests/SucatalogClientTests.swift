@@ -36,9 +36,35 @@ func carriesDistributionAndSize() throws {
     #expect(modern.totalSize == 15_296_950_272)
 }
 
-@Test("throws when the payload is not a property list")
-func throwsOnNonPlist() {
-    #expect(throws: (any Error).self) {
+@Test("reports notAPropertyList for data that is not a property list at all")
+func throwsNotAPropertyListOnGarbage() {
+    #expect(throws: SucatalogParseError.notAPropertyList) {
         try SucatalogClient.parse(Data("nonsense".utf8))
     }
+}
+
+@Test("reports missingProductsDictionary for a valid plist with no Products key")
+func throwsMissingProductsForValidPlistWithoutProducts() throws {
+    let plist: [String: Any] = ["CatalogVersion": 2, "ApplePostURL": "https://example.invalid"]
+    let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+
+    #expect(throws: SucatalogParseError.missingProductsDictionary) {
+        try SucatalogClient.parse(data)
+    }
+}
+
+@Test("drops a package whose Size is missing rather than reporting it as zero bytes")
+func dropsPackageWithMissingSize() throws {
+    let plist: [String: Any] = ["Products": [
+        "999-00001": [
+            "PostDate": Date(timeIntervalSince1970: 0),
+            "Packages": [["URL": "https://swcdn.apple.com/x/InstallAssistant.pkg"]],
+        ]
+    ]]
+    let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+
+    let products = try SucatalogClient.parse(data)
+
+    // The sole package is unusable, so the product is not an installer at all.
+    #expect(products.isEmpty)
 }

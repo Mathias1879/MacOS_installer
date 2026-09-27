@@ -36,9 +36,9 @@ public enum SucatalogClient {
         let packages = (entry["Packages"] as? [[String: Any]] ?? []).compactMap { package -> CatalogPackage? in
             guard
                 let urlString = package["URL"] as? String,
-                let url = URL(string: urlString)
+                let url = URL(string: urlString),
+                let size = (package["Size"] as? NSNumber)?.int64Value
             else { return nil }
-            let size = (package["Size"] as? NSNumber)?.int64Value ?? 0
             return CatalogPackage(url: url, size: size)
         }
 
