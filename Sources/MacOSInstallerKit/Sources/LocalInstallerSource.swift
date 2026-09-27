@@ -11,16 +11,22 @@ public struct LocalInstallerSource: InstallerSource {
     public let origin: InstallerRelease.Origin = .local
 
     private let searchDirectories: [URL]
-    private nonisolated(unsafe) let fileManager: FileManager
+    private let listDirectory: @Sendable (URL) -> [URL]
     private let measureSize: @Sendable (URL) -> Int64
 
     public init(
         searchDirectories: [URL] = LocalInstallerSource.defaultSearchDirectories,
-        fileManager: FileManager = .default,
+        listDirectory: (@Sendable (URL) -> [URL])? = nil,
         measureSize: (@Sendable (URL) -> Int64)? = nil
     ) {
         self.searchDirectories = searchDirectories
-        self.fileManager = fileManager
+        self.listDirectory = listDirectory ?? { directory in
+            (try? FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )) ?? []
+        }
         self.measureSize = measureSize ?? { url in
             (try? FileManager.default.allocatedSize(ofDirectoryAt: url)) ?? 0
         }
@@ -34,19 +40,13 @@ public struct LocalInstallerSource: InstallerSource {
     }
 
     private func candidateApplications(in directory: URL) -> [URL] {
-        guard let entries = try? fileManager.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        ) else { return [] }
+        let entries = listDirectory(directory)
 
         return entries.filter {
             $0.pathExtension == "app" && $0.lastPathComponent.hasPrefix("Install macOS")
         }.map { url in
             let standardized = url.standardizedFileURL
-            let resolved = URL(fileURLWithPath: standardized.path.hasSuffix("/") ?
-                String(standardized.path.dropLast()) : standardized.path)
-            return resolved
+            return removingTrailingSlash(from: standardized)
         }
     }
 
@@ -68,9 +68,7 @@ public struct LocalInstallerSource: InstallerSource {
         // Fail-closed: skip if computed size is 0 (indicates unreadable bundle)
         guard size > 0 else { return nil }
 
-        // Normalize the app path by removing any trailing slash
-        let path = app.path.hasSuffix("/") ? String(app.path.dropLast()) : app.path
-        let normalizedApp = URL(fileURLWithPath: path)
+        let normalizedApp = removingTrailingSlash(from: app)
 
         return InstallerRelease(
             name: name,
@@ -80,6 +78,14 @@ public struct LocalInstallerSource: InstallerSource {
             origin: .local,
             payload: .localApplication(path: normalizedApp)
         )
+    }
+
+    /// Removes trailing slash from a file URL path if present.
+    private func removingTrailingSlash(from url: URL) -> URL {
+        if url.path.hasSuffix("/") {
+            return URL(fileURLWithPath: String(url.path.dropLast()))
+        }
+        return url
     }
 }
 
