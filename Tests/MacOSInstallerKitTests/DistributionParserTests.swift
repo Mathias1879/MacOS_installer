@@ -83,3 +83,30 @@ func doesNotMisPairKeyWithWrongValue() throws {
         try DistributionParser.parse(data)
     }
 }
+
+@Test("resolves legacy localization keys (SU_TITLE) from the strings block")
+func resolvesLegacyLocalizationKey() throws {
+    let info = try DistributionParser.parse(fixture("legacy-mojave.dist"))
+
+    #expect(info.title == "macOS Mojave")
+    #expect(info.version == OSVersion("10.14.5"))
+    #expect(info.build == "18F2059")
+}
+
+@Test("does not regress: modern literal titles parse unchanged")
+func modernLiteralTitleUnchanged() throws {
+    let info = try DistributionParser.parse(fixture("sequoia.dist"))
+
+    #expect(info.title == "macOS Sequoia")
+    #expect(info.build == "24H23")
+    #expect(info.version == OSVersion("15.8"))
+}
+
+@Test("throws missingTitle when a localization key has no matching definition")
+func throwsOnUnresolvablePlaceholder() throws {
+    let data = try fixture("unresolvable-placeholder.dist")
+
+    #expect(throws: DistributionParseError.missingTitle) {
+        try DistributionParser.parse(data)
+    }
+}

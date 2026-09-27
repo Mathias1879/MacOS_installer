@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>SU_UNKNOWN_KEY</title>
+    <auxinfo>
+        <dict>
+            <key>BUILD</key>
+            <string>20A1</string>
+            <key>VERSION</key>
+            <string>11.0</string>
+        </dict>
+    </auxinfo>
+    <localization>
+        <strings language="English">"SU_TITLE" = "macOS Big Sur";
+</strings>
+    </localization>
+</installer-gui-script>
