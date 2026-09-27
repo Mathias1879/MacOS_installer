@@ -10,13 +10,25 @@ public enum DiskEnumeratorError: Error, Equatable {
 public struct DiskEnumerator {
     public static let diskutilPath = "/usr/sbin/diskutil"
 
+    public struct Result: Sendable {
+        public let volumes: [Volume]
+        /// One entry per identifier that could not be read, so the caller can
+        /// tell "that drive isn't attached" from "we could not read it".
+        public let failures: [String]
+
+        public init(volumes: [Volume], failures: [String]) {
+            self.volumes = volumes
+            self.failures = failures
+        }
+    }
+
     private let runner: any CommandRunner
 
     public init(runner: any CommandRunner) {
         self.runner = runner
     }
 
-    public func mountedVolumes() throws -> [Volume] {
+    public func mountedVolumes() throws -> Result {
         let listed = try runner.run(Self.diskutilPath, ["list", "-plist"])
 
         guard listed.exitCode == 0 else {
@@ -33,13 +45,29 @@ public struct DiskEnumerator {
             throw DiskEnumeratorError.listFailed("unparsable diskutil output: \(error)")
         }
 
-        return identifiers.compactMap { identifier in
-            guard
-                let info = try? runner.run(Self.diskutilPath, ["info", "-plist", identifier]),
-                info.exitCode == 0,
-                let volume = try? DiskutilClient.parseInfo(Data(info.standardOutput.utf8))
-            else { return nil }
-            return volume
+        var volumes: [Volume] = []
+        var failures: [String] = []
+
+        for identifier in identifiers {
+            guard let info = try? runner.run(Self.diskutilPath, ["info", "-plist", identifier]) else {
+                failures.append("\(identifier): failed to run diskutil info")
+                continue
+            }
+
+            guard info.exitCode == 0 else {
+                let errorMsg = info.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
+                failures.append("\(identifier): diskutil info exited \(info.exitCode): \(errorMsg)")
+                continue
+            }
+
+            do {
+                let volume = try DiskutilClient.parseInfo(Data(info.standardOutput.utf8))
+                volumes.append(volume)
+            } catch {
+                failures.append("\(identifier): could not parse info: \(error)")
+            }
         }
+
+        return Result(volumes: volumes, failures: failures)
     }
 }

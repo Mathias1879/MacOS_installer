@@ -48,10 +48,11 @@ func enumeratesVolumes() throws {
         for: "/usr/sbin/diskutil info -plist disk5s1"
     )
 
-    let volumes = try DiskEnumerator(runner: runner).mountedVolumes()
+    let result = try DiskEnumerator(runner: runner).mountedVolumes()
 
-    #expect(volumes.map(\.deviceIdentifier) == ["disk3s1", "disk5s1"])
-    #expect(volumes.map(\.volumeName) == ["Macintosh HD", "Untitled"])
+    #expect(result.volumes.map(\.deviceIdentifier) == ["disk3s1", "disk5s1"])
+    #expect(result.volumes.map(\.volumeName) == ["Macintosh HD", "Untitled"])
+    #expect(result.failures.isEmpty)
 }
 
 @Test("skips a volume whose info cannot be read rather than failing the whole listing")
@@ -64,9 +65,55 @@ func skipsUnreadableVolume() throws {
     )
     // disk3s1 intentionally unstubbed — the fake returns a failing result.
 
-    let volumes = try DiskEnumerator(runner: runner).mountedVolumes()
+    let result = try DiskEnumerator(runner: runner).mountedVolumes()
 
-    #expect(volumes.map(\.deviceIdentifier) == ["disk5s1"])
+    #expect(result.volumes.map(\.deviceIdentifier) == ["disk5s1"])
+    #expect(result.failures.count == 1)
+    #expect(result.failures[0].contains("disk3s1"))
+}
+
+@Test("records why each unreadable volume was skipped")
+func recordsSkipReasons() throws {
+    let runner = FakeCommandRunner()
+    runner.stub(standardOutput: listPlist, for: "/usr/sbin/diskutil list -plist")
+    runner.stub(
+        standardOutput: infoPlist(id: "disk5s1", name: "Untitled", mount: "/Volumes/Untitled 1", isInternal: false, container: "disk5"),
+        for: "/usr/sbin/diskutil info -plist disk5s1"
+    )
+    // disk3s1 intentionally unstubbed — the fake returns a failing result.
+
+    let result = try DiskEnumerator(runner: runner).mountedVolumes()
+
+    #expect(result.volumes.map(\.deviceIdentifier) == ["disk5s1"])
+    #expect(result.failures.count == 1)
+    #expect(result.failures[0].contains("disk3s1"))
+}
+
+@Test("skips a volume whose info parses as a plist but is missing required fields")
+func skipsVolumeWithUnparsableInfo() throws {
+    let runner = FakeCommandRunner()
+    runner.stub(standardOutput: listPlist, for: "/usr/sbin/diskutil list -plist")
+    let badPlist = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+      <key>DeviceIdentifier</key><string>disk3s1</string>
+      <key>MountPoint</key><string>/</string>
+    </dict>
+    </plist>
+    """
+    runner.stub(standardOutput: badPlist, for: "/usr/sbin/diskutil info -plist disk3s1")
+    runner.stub(
+        standardOutput: infoPlist(id: "disk5s1", name: "Untitled", mount: "/Volumes/Untitled 1", isInternal: false, container: "disk5"),
+        for: "/usr/sbin/diskutil info -plist disk5s1"
+    )
+
+    let result = try DiskEnumerator(runner: runner).mountedVolumes()
+
+    #expect(result.volumes.map(\.deviceIdentifier) == ["disk5s1"])
+    #expect(result.failures.count == 1)
+    #expect(result.failures[0].contains("disk3s1"))
 }
 
 @Test("throws when the list command itself fails")
