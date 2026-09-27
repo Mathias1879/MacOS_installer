@@ -12,13 +12,18 @@ public struct LocalInstallerSource: InstallerSource {
 
     private let searchDirectories: [URL]
     private nonisolated(unsafe) let fileManager: FileManager
+    private let measureSize: @Sendable (URL) -> Int64
 
     public init(
         searchDirectories: [URL] = LocalInstallerSource.defaultSearchDirectories,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        measureSize: (@Sendable (URL) -> Int64)? = nil
     ) {
         self.searchDirectories = searchDirectories
         self.fileManager = fileManager
+        self.measureSize = measureSize ?? { url in
+            (try? FileManager.default.allocatedSize(ofDirectoryAt: url)) ?? 0
+        }
     }
 
     public func availableReleases() async throws -> [InstallerRelease] {
@@ -58,7 +63,7 @@ public struct LocalInstallerSource: InstallerSource {
             let build = info["DTSDKBuild"] as? String
         else { return nil }
 
-        let size = (try? fileManager.allocatedSize(ofDirectoryAt: app)) ?? 0
+        let size = measureSize(app)
 
         // Fail-closed: skip if computed size is 0 (indicates unreadable bundle)
         guard size > 0 else { return nil }

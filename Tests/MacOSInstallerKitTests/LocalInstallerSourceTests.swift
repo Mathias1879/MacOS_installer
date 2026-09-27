@@ -41,9 +41,13 @@ func discoversInstallerApps() async throws {
     #expect(release.version == OSVersion("26.7"))
     #expect(release.build == "25G229")
     #expect(release.origin == .local)
-    // Normalize path the same way the implementation does
-    let normalizedPath = app.path.hasSuffix("/") ? String(app.path.dropLast()) : app.path
-    #expect(release.payload == .localApplication(path: URL(fileURLWithPath: normalizedPath)))
+    // Compare paths as strings, removing trailing slashes for consistent comparison
+    guard case .localApplication(path: let returnedPath) = release.payload else {
+        Issue.record("Expected localApplication payload")
+        return
+    }
+    let normalizedReturned = returnedPath.path.hasSuffix("/") ? String(returnedPath.path.dropLast()) : returnedPath.path
+    #expect(normalizedReturned == app.path)
 }
 
 @Test("ignores applications that are not macOS installers")
@@ -67,24 +71,56 @@ func returnsEmptyForMissingDirectory() async throws {
     #expect(try await source.availableReleases().isEmpty)
 }
 
-@Test("skips installer apps with computed size of 0")
-func skipsInstallerAppsWithZeroSize() async throws {
+@Test("skips a bundle with no Info.plist")
+func skipsBundleWithNoInfoPlist() async throws {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())
         .appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
 
-    // Create an app bundle directory with no files (traversal will sum to 0)
-    // This simulates a bundle that is unreadable or corrupted
+    // Create an app bundle directory with no Info.plist
     let app = root.appendingPathComponent("Install macOS Sonoma.app")
     let contents = app.appendingPathComponent("Contents")
     try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
-    // No Info.plist is created, so allocatedSize will return 0
 
     let source = LocalInstallerSource(searchDirectories: [root])
     let releases = try await source.availableReleases()
 
     #expect(releases.isEmpty)
+}
+
+@Test("skips a bundle whose computed size is zero, rather than offering it with an unknown size")
+func skipsBundleWithZeroComputedSize() async throws {
+    let root = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    // Create a fully valid installer bundle
+    _ = try makeInstallerApp(in: root, displayName: "Install macOS Tahoe", version: "26.7", build: "25G229")
+
+    // Inject a mock size calculator that returns 0
+    let source = LocalInstallerSource(searchDirectories: [root], measureSize: { _ in 0 })
+    let releases = try await source.availableReleases()
+
+    #expect(releases.isEmpty)
+}
+
+@Test("reports the measured size for a readable bundle")
+func reportsMeasuredSize() async throws {
+    let root = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    _ = try makeInstallerApp(in: root, displayName: "Install macOS Tahoe", version: "26.7", build: "25G229")
+
+    // Inject a mock size calculator that returns a known value
+    let expectedSize: Int64 = 15_296_950_272
+    let source = LocalInstallerSource(searchDirectories: [root], measureSize: { _ in expectedSize })
+    let release = try #require(try await source.availableReleases().first)
+
+    #expect(release.sizeBytes == expectedSize)
 }
 
 @Test("sorts releases by version, newest first")
@@ -131,8 +167,12 @@ func skipsBundlesWithMalformedInfoPlist() async throws {
     #expect(releases.count == 1)
     let release = try #require(releases.first)
     #expect(release.name == "Install macOS Tahoe")
-    let normalizedValidPath = validApp.path.hasSuffix("/") ? String(validApp.path.dropLast()) : validApp.path
-    #expect(release.payload == .localApplication(path: URL(fileURLWithPath: normalizedValidPath)))
+    guard case .localApplication(path: let returnedPath) = release.payload else {
+        Issue.record("Expected localApplication payload")
+        return
+    }
+    let normalizedReturned = returnedPath.path.hasSuffix("/") ? String(returnedPath.path.dropLast()) : returnedPath.path
+    #expect(normalizedReturned == validApp.path)
 }
 
 @Test("skips bundles with missing required Info.plist keys")
@@ -164,6 +204,10 @@ func skipsBundlesWithMissingInfoPlistKeys() async throws {
     #expect(releases.count == 1)
     let release = try #require(releases.first)
     #expect(release.name == "Install macOS Tahoe")
-    let normalizedValidPath = validApp.path.hasSuffix("/") ? String(validApp.path.dropLast()) : validApp.path
-    #expect(release.payload == .localApplication(path: URL(fileURLWithPath: normalizedValidPath)))
+    guard case .localApplication(path: let returnedPath) = release.payload else {
+        Issue.record("Expected localApplication payload")
+        return
+    }
+    let normalizedReturned = returnedPath.path.hasSuffix("/") ? String(returnedPath.path.dropLast()) : returnedPath.path
+    #expect(normalizedReturned == validApp.path)
 }
