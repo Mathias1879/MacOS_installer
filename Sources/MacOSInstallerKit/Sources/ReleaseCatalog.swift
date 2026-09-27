@@ -46,6 +46,11 @@ public struct ReleaseCatalog {
             best[release.identity] = release
         }
 
+        // Dictionary iteration order is unspecified, but the output is still
+        // deterministic: keys are unique ReleaseIdentity values, so two entries
+        // that compare equal on version must differ in build. The comparator is
+        // therefore a total order with no ties, and the sorted result does not
+        // depend on the order values came out of the dictionary.
         let sorted = best.values.sorted {
             if $0.version != $1.version { return $0.version > $1.version }
             return $0.build > $1.build

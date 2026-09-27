@@ -64,7 +64,7 @@ func keepsDistinctBuilds() async throws {
 
     let result = await catalog.allReleases()
 
-    #expect(result.releases.count == 2)
+    #expect(result.releases.map(\.build) == ["25G230", "25G229"])
 }
 
 @Test("excludes versions below the Mojave floor")
@@ -79,6 +79,21 @@ func excludesBelowMinimumVersion() async throws {
     let result = await catalog.allReleases()
 
     #expect(result.releases.map(\.build) == ["18G103"])
+}
+
+@Test("includes a release at exactly the Mojave floor and excludes anything below it")
+func includesExactFloorExcludesBelow() async throws {
+    let catalog = ReleaseCatalog(sources: [
+        StubSource(origin: .sucatalog, releases: [
+            try release("10.13.6", build: "17G66", origin: .sucatalog),
+            try release("10.14",   build: "18A391", origin: .sucatalog),
+            try release("10.14.6", build: "18G103", origin: .sucatalog),
+        ])
+    ])
+
+    let result = await catalog.allReleases()
+
+    #expect(result.releases.map(\.build) == ["18G103", "18A391"])
 }
 
 @Test("records a source failure without losing the other sources' results")
