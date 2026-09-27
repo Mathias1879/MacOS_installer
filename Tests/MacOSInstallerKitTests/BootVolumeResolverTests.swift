@@ -59,3 +59,55 @@ func throwsWhenDiskutilFails() {
         _ = try resolver.resolve()
     }
 }
+
+@Test("throws when APFSContainerReference is missing")
+func throwsWhenMissingContainer() throws {
+    let plist = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+      <key>DeviceIdentifier</key><string>disk3s1s1</string>
+      <key>VolumeName</key><string>Macintosh HD</string>
+      <key>MountPoint</key><string>/</string>
+      <key>Internal</key><true/>
+      <key>ParentWholeDisk</key><string>disk3</string>
+      <key>WholeDisk</key><false/>
+      <key>Size</key><integer>245107195904</integer>
+    </dict>
+    </plist>
+    """
+    let runner = FakeCommandRunner()
+    runner.stub(standardOutput: plist, for: "/usr/sbin/diskutil info -plist /")
+
+    #expect(throws: BootVolumeResolverError.self) {
+        _ = try BootVolumeResolver(runner: runner).resolve()
+    }
+}
+
+@Test("maps the APFS container and the parent whole disk to distinct fields")
+func mapsContainerAndParentSeparately() throws {
+    let plist = """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+      <key>DeviceIdentifier</key><string>disk3s1s1</string>
+      <key>VolumeName</key><string>Macintosh HD</string>
+      <key>MountPoint</key><string>/</string>
+      <key>Internal</key><true/>
+      <key>APFSContainerReference</key><string>disk3</string>
+      <key>ParentWholeDisk</key><string>disk9</string>
+      <key>WholeDisk</key><false/>
+      <key>Size</key><integer>245107195904</integer>
+    </dict>
+    </plist>
+    """
+    let runner = FakeCommandRunner()
+    runner.stub(standardOutput: plist, for: "/usr/sbin/diskutil info -plist /")
+
+    let boot = try BootVolumeResolver(runner: runner).resolve()
+
+    #expect(boot.containerReference == "disk3")
+    #expect(boot.parentWholeDisk == "disk9")
+}

@@ -2,7 +2,12 @@ import Foundation
 
 public struct BootVolume: Equatable, Sendable {
     public let deviceIdentifier: String
-    public let containerReference: String?
+    /// Non-optional by design. An Optional here would let a caller write
+    /// `candidate.container == boot.container`, which is TRUE when both are
+    /// nil — silently marking unrelated volumes as the startup disk. Every
+    /// supported host (macOS 13+) boots from APFS, so a missing container is
+    /// an error, not a state to reason about.
+    public let containerReference: String
     public let parentWholeDisk: String
 }
 
@@ -47,9 +52,15 @@ public struct BootVolumeResolver {
             throw BootVolumeResolverError.cannotIdentifyBootVolume("unparsable diskutil output: \(error)")
         }
 
+        guard let container = volume.apfsContainerReference else {
+            throw BootVolumeResolverError.cannotIdentifyBootVolume(
+                "diskutil reported no APFS container for / (device \(volume.deviceIdentifier))"
+            )
+        }
+
         return BootVolume(
             deviceIdentifier: volume.deviceIdentifier,
-            containerReference: volume.apfsContainerReference,
+            containerReference: container,
             parentWholeDisk: volume.parentWholeDisk
         )
     }
