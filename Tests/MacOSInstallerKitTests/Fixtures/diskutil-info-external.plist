@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>DeviceIdentifier</key><string>disk5s1</string>
+  <key>VolumeName</key><string>Untitled</string>
+  <key>VolumeUUID</key><string>9662C8FB-5D1F-4744-81E0-618FBC801198</string>
+  <key>MountPoint</key><string>/Volumes/Untitled 1</string>
+  <key>Internal</key><false/>
+  <key>Ejectable</key><true/>
+  <key>BusProtocol</key><string>USB</string>
+  <key>APFSContainerReference</key><string>disk5</string>
+  <key>ParentWholeDisk</key><string>disk5</string>
+  <key>WholeDisk</key><false/>
+  <key>Size</key><integer>499898081280</integer>
+</dict>
+</plist>
