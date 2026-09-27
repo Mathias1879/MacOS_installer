@@ -19,11 +19,14 @@ func parsesFullInstallerListing() async throws {
     let releases = try await source.availableReleases()
 
     #expect(releases.count == 3)
+    #expect(releases.map(\.build) == ["26A428", "25G229", "24H23"])
     let tahoe = try #require(releases.first { $0.build == "25G229" })
     #expect(tahoe.name == "macOS Tahoe")
     #expect(tahoe.version == OSVersion("26.7"))
     #expect(tahoe.origin == .softwareUpdate)
     #expect(tahoe.payload == .softwareUpdate(version: "26.7"))
+    let goldenGate = try #require(releases.first { $0.build == "26A428" })
+    #expect(goldenGate.name == "macOS 27 Golden Gate")
 }
 
 @Test("converts the KiB size field to bytes")
@@ -58,5 +61,20 @@ func ignoresMalformedLines() async throws {
     runner.stub(standardOutput: output, for: "/usr/sbin/softwareupdate --list-full-installers")
     let source = SoftwareUpdateSource(runner: runner)
 
-    #expect(try await source.availableReleases().count == 1)
+    let releases = try await source.availableReleases()
+    #expect(releases.count == 1)
+    #expect(releases.first?.build == "25G229")
+}
+
+@Test("skips a line whose Size field is missing rather than reporting zero bytes")
+func skipsLineWithMissingSize() async throws {
+    let output = """
+    Software Update found the following full installers:
+    * Title: macOS Tahoe, Version: 26.7, Build: 25G229, Deferred: NO
+    """
+    let runner = FakeCommandRunner()
+    runner.stub(standardOutput: output, for: "/usr/sbin/softwareupdate --list-full-installers")
+    let source = SoftwareUpdateSource(runner: runner)
+
+    #expect(try await source.availableReleases().isEmpty)
 }

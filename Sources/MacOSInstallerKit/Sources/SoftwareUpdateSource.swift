@@ -42,10 +42,9 @@ public struct SoftwareUpdateSource: InstallerSource {
             let title = fields["Title"],
             let versionString = fields["Version"],
             let version = OSVersion(versionString),
-            let build = fields["Build"]
+            let build = fields["Build"],
+            let kibibytes = Int64(fields["Size"]?.replacingOccurrences(of: "KiB", with: "") ?? "")
         else { return nil }
-
-        let kibibytes = Int64(fields["Size"]?.replacingOccurrences(of: "KiB", with: "") ?? "") ?? 0
 
         return InstallerRelease(
             name: title,
