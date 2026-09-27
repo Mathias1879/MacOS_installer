@@ -51,7 +51,6 @@ private final class DistributionXMLDelegate: NSObject, XMLParserDelegate {
     private(set) var auxInfo: [String: String] = [:]
 
     private var inAuxInfo = false
-    private var currentElement: String?
     private var buffer = ""
     private var pendingKey: String?
 
@@ -62,7 +61,6 @@ private final class DistributionXMLDelegate: NSObject, XMLParserDelegate {
         qualifiedName: String?,
         attributes: [String: String]
     ) {
-        currentElement = elementName
         buffer = ""
         if elementName == "auxinfo" { inAuxInfo = true }
     }
@@ -91,11 +89,14 @@ private final class DistributionXMLDelegate: NSObject, XMLParserDelegate {
                 auxInfo[key] = text
                 pendingKey = nil
             }
-        default:
+        case "dict":
             break
+        default:
+            // An unexpected element type inside auxinfo must not leave a key
+            // dangling to be mis-paired with a later <string>.
+            if inAuxInfo { pendingKey = nil }
         }
 
         buffer = ""
-        currentElement = nil
     }
 }

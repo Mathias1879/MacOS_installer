@@ -33,3 +33,48 @@ func throwsOnGarbage() {
         try DistributionParser.parse(data)
     }
 }
+
+@Test("throws when the title element is absent")
+func throwsOnMissingTitle() throws {
+    let data = try fixture("no-title.dist")
+
+    #expect(throws: DistributionParseError.missingTitle) {
+        try DistributionParser.parse(data)
+    }
+}
+
+@Test("throws when the build key is absent from auxinfo")
+func throwsOnMissingBuild() throws {
+    let data = try fixture("no-build.dist")
+
+    #expect(throws: DistributionParseError.missingBuild) {
+        try DistributionParser.parse(data)
+    }
+}
+
+@Test("throws when the version value cannot be parsed as an OSVersion")
+func throwsOnUnparsableVersion() throws {
+    let data = try fixture("bad-version.dist")
+
+    #expect(throws: DistributionParseError.unparsableVersion("Tahoe")) {
+        try DistributionParser.parse(data)
+    }
+}
+
+@Test("uses document-level title and ignores title inside auxinfo")
+func ignoresTitleInsideAuxInfo() throws {
+    let info = try DistributionParser.parse(fixture("title-in-auxinfo.dist"))
+
+    #expect(info.title == "macOS Correct Title")
+}
+
+@Test("clears pending key when encountering unexpected element type, preventing mis-pairing")
+func doesNotMisPairKeyWithWrongValue() throws {
+    let data = try fixture("version-with-intervening-integer.dist")
+
+    // The VERSION key should not pair with the "11.0" string that comes after <integer>.
+    // Instead, the parser should fail to find VERSION (since <integer> clears pendingKey).
+    #expect(throws: DistributionParseError.missingVersion) {
+        try DistributionParser.parse(data)
+    }
+}
