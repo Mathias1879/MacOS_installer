@@ -7,7 +7,6 @@ public struct OSVersion: Comparable, Hashable, Sendable, CustomStringConvertible
 
     public init?(_ string: String) {
         let parts = string.split(separator: ".", omittingEmptySubsequences: false)
-        guard !parts.isEmpty else { return nil }
 
         var parsed: [Int] = []
         parsed.reserveCapacity(parts.count)

@@ -53,6 +53,26 @@ func throwsMissingProductsForValidPlistWithoutProducts() throws {
     }
 }
 
+@Test("sums totalSize across all packages of a legacy product with two packages")
+func sumsLegacyTotalSizeAcrossTwoPackages() throws {
+    let plist: [String: Any] = ["Products": [
+        "999-00002": [
+            "PostDate": Date(timeIntervalSince1970: 0),
+            "Packages": [
+                ["URL": "https://swcdn.apple.com/x/BaseSystem.pkg", "Size": 100],
+                ["URL": "https://swcdn.apple.com/x/InstallESDDmg.pkg", "Size": 200],
+            ],
+        ]
+    ]]
+    let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+
+    let products = try SucatalogClient.parse(data)
+    let legacy = try #require(products.first { $0.identifier == "999-00002" })
+
+    #expect(legacy.kind == .legacyESD)
+    #expect(legacy.totalSize == 300)
+}
+
 @Test("drops a package whose Size is missing rather than reporting it as zero bytes")
 func dropsPackageWithMissingSize() throws {
     let plist: [String: Any] = ["Products": [

@@ -66,6 +66,32 @@ func ignoresMalformedLines() async throws {
     #expect(releases.first?.build == "25G229")
 }
 
+@Test("throws when the command exits non-zero, carrying exit code and stderr")
+func throwsOnNonZeroExit() async throws {
+    let runner = FakeCommandRunner()
+    runner.stub(
+        CommandResult(exitCode: 1, standardOutput: "", standardError: "some failure"),
+        for: "/usr/sbin/softwareupdate --list-full-installers"
+    )
+    let source = SoftwareUpdateSource(runner: runner)
+
+    await #expect(throws: SoftwareUpdateSourceError.commandFailed(exitCode: 1, message: "some failure")) {
+        try await source.availableReleases()
+    }
+}
+
+@Test("returns empty, not throws, when exit is zero with no installers listed")
+func returnsEmptyOnZeroExitWithNoInstallers() async throws {
+    let runner = FakeCommandRunner()
+    runner.stub(
+        CommandResult(exitCode: 0, standardOutput: "", standardError: ""),
+        for: "/usr/sbin/softwareupdate --list-full-installers"
+    )
+    let source = SoftwareUpdateSource(runner: runner)
+
+    #expect(try await source.availableReleases().isEmpty)
+}
+
 @Test("skips a line whose Size field is missing rather than reporting zero bytes")
 func skipsLineWithMissingSize() async throws {
     let output = """

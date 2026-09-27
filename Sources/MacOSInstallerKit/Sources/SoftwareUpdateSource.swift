@@ -1,5 +1,12 @@
 import Foundation
 
+/// Errors specific to running `softwareupdate`. A non-zero exit is a genuine
+/// failure to reach the tool, distinguished from a zero exit that legitimately
+/// lists no installers (e.g. on an Apple silicon Mac where none apply).
+public enum SoftwareUpdateSourceError: Error, Equatable, Sendable {
+    case commandFailed(exitCode: Int32, message: String)
+}
+
 /// Reads `softwareupdate --list-full-installers`. Apple filters this list to
 /// versions the *host* model supports, so it is a fallback rather than the
 /// primary source. Line format verified on macOS 27.0, 2026-09-26:
@@ -17,6 +24,14 @@ public struct SoftwareUpdateSource: InstallerSource {
 
     public func availableReleases() async throws -> [InstallerRelease] {
         let result = try runner.run(Self.executablePath, ["--list-full-installers"])
+
+        guard result.exitCode == 0 else {
+            throw SoftwareUpdateSourceError.commandFailed(
+                exitCode: result.exitCode,
+                message: result.standardError.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+
         return result.standardOutput
             .split(separator: "\n", omittingEmptySubsequences: true)
             .compactMap { Self.parseLine(String($0)) }

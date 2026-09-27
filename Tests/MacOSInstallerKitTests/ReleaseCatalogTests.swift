@@ -110,6 +110,33 @@ func oneFailingSourceDoesNotLoseOthers() async throws {
     #expect(result.failures.count == 1)
 }
 
+@Test("excludes a release with a non-positive size while keeping a normal-sized one at the same version")
+func excludesZeroSizeRelease() async throws {
+    let zeroSized = InstallerRelease(
+        name: "macOS Test",
+        version: try #require(OSVersion("26.7")),
+        build: "25G229",
+        sizeBytes: 0,
+        origin: .sucatalog,
+        payload: .softwareUpdate(version: "26.7")
+    )
+    let normalSized = InstallerRelease(
+        name: "macOS Test",
+        version: try #require(OSVersion("26.7")),
+        build: "25G230",
+        sizeBytes: 1000,
+        origin: .sucatalog,
+        payload: .softwareUpdate(version: "26.7")
+    )
+    let catalog = ReleaseCatalog(sources: [
+        StubSource(origin: .sucatalog, releases: [zeroSized, normalSized])
+    ])
+
+    let result = await catalog.allReleases()
+
+    #expect(result.releases.map(\.build) == ["25G230"])
+}
+
 @Test("sorts newest version first")
 func sortsNewestFirst() async throws {
     let catalog = ReleaseCatalog(sources: [

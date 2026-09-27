@@ -35,7 +35,14 @@ public struct ReleaseCatalog {
             }
         }
 
-        let eligible = collected.filter { $0.version >= minimumVersion }
+        // sizeBytes > 0 is a fail-closed gate, not an optimisation: a later
+        // phase refuses a target USB drive when its capacity is below
+        // installer size + 2 GB headroom. A release that reaches the caller
+        // reporting 0 bytes would make that check pass trivially and permit
+        // an oversized installer onto an undersized drive. Every source is
+        // hardened to drop what it cannot size, but this filter is the single
+        // choke point all three flow through — do not remove it.
+        let eligible = collected.filter { $0.version >= minimumVersion && $0.sizeBytes > 0 }
 
         // Same version+build from two sources collapses to the higher-precedence one.
         var best: [ReleaseIdentity: InstallerRelease] = [:]
