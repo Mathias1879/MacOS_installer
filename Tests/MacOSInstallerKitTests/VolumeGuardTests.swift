@@ -161,3 +161,30 @@ func refusalReasonsHaveMessages() {
         #expect(reason.userMessage.isEmpty == false)
     }
 }
+
+@Test("protected-path matching is case-insensitive, as APFS is")
+func protectedPathIsCaseInsensitive() {
+    let v = volume(mount: "/Volumes/Work")
+    #expect(verdict(for: v, protectedPaths: ["/volumes/work/caches/x.pkg"])
+        == .refused(.holdsProtectedPath("/volumes/work/caches/x.pkg")))
+}
+
+@Test("protected-path matching survives Unicode normalization differences")
+func protectedPathHandlesUnicodeNormalization() {
+    // "Café" precomposed in the mount point, decomposed in the path.
+    let v = volume(mount: "/Volumes/Caf\u{00E9}")
+    #expect(verdict(for: v, protectedPaths: ["/Volumes/Cafe\u{0301}/caches/x.pkg"])
+        == .refused(.holdsProtectedPath("/Volumes/Cafe\u{0301}/caches/x.pkg")))
+}
+
+@Test("a negative requiredBytes still requires at least the headroom")
+func negativeRequiredBytesStillRequiresHeadroom() {
+    let tooSmall = volume(size: 1_999_999_999)
+    let exact = volume(size: 2_000_000_000)
+
+    #expect(
+        verdict(for: tooSmall, required: -5)
+            == .refused(.tooSmall(capacityBytes: 1_999_999_999, requiredBytes: 2_000_000_000))
+    )
+    #expect(verdict(for: exact, required: -5) == .selectable)
+}

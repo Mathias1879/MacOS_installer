@@ -60,7 +60,7 @@ public enum VolumeGuard {
         requiredBytes: Int64,
         protectedPaths: [String]
     ) -> [VolumeDecision] {
-        let needed = requiredBytes + headroomBytes
+        let needed = max(0, requiredBytes) + headroomBytes
 
         return volumes.map { volume in
             VolumeDecision(volume: volume, verdict: verdict(
@@ -107,10 +107,25 @@ public enum VolumeGuard {
         return .selectable
     }
 
-    /// Path containment by path component, so `/Volumes/Work` does not match
-    /// `/Volumes/Workshop`.
+    /// Path containment by path component, case-insensitively and with Unicode
+    /// canonically precomposed.
+    ///
+    /// APFS is case-insensitive by default, and the same path can arrive NFC
+    /// from one API and NFD from another. A byte-exact comparison would report
+    /// "not protected" for a volume that holds the file this run is reading,
+    /// so the guard would offer to erase it.
+    ///
+    /// CALLER CONTRACT: `protectedPaths` must be absolute and already
+    /// symlink-resolved. Resolving a symlink requires filesystem access and
+    /// this type is deliberately pure, so the caller owns that step.
     private static func isPath(_ path: String, under mountPoint: String) -> Bool {
-        let normalizedMount = mountPoint.hasSuffix("/") ? String(mountPoint.dropLast()) : mountPoint
-        return path == normalizedMount || path.hasPrefix(normalizedMount + "/")
+        let normalize: (String) -> String = {
+            var s = $0.precomposedStringWithCanonicalMapping.lowercased()
+            while s.count > 1 && s.hasSuffix("/") { s.removeLast() }
+            return s
+        }
+        let p = normalize(path)
+        let m = normalize(mountPoint)
+        return p == m || p.hasPrefix(m + "/")
     }
 }
