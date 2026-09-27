@@ -25,7 +25,13 @@ final class FakeCommandRunner: CommandRunner, @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         invocations.append((executable, arguments))
         let key = ([executable] + arguments).joined(separator: " ")
-        return stubs[key] ?? CommandResult(exitCode: 0, standardOutput: "", standardError: "")
+        return stubs[key] ?? CommandResult(
+            exitCode: 127,
+            standardOutput: "",
+            standardError: "FakeCommandRunner: unstubbed command '\(key)'. "
+                + "Stub it explicitly — a silent success here would let a test "
+                + "believe a destructive command succeeded when it never ran."
+        )
     }
 
     /// True if any invocation's command line contains `fragment`.

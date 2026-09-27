@@ -16,9 +16,10 @@ func stubbedCommandReturnsResult() throws {
     #expect(result == expected)
 }
 
-@Test("unstubbed command returns empty default result")
-func unstubbedCommandReturnsDefault() throws {
+@Test("stubbed command with default success result")
+func stubbedCommandWithDefaultSuccess() throws {
     let fake = FakeCommandRunner()
+    fake.stub(standardOutput: "", for: "/usr/bin/unknown arg")
 
     let result = try fake.run("/usr/bin/unknown", ["arg"])
 
@@ -77,4 +78,26 @@ func stubConvenienceMethod() throws {
     #expect(result.exitCode == 0)
     #expect(result.standardOutput == "success output")
     #expect(result.standardError == "")
+}
+
+@Test("an unstubbed command returns a failing result so a forgotten stub cannot pass silently")
+func unstubbedCommandFails() throws {
+    let runner = FakeCommandRunner()
+
+    let result = try runner.run("/usr/sbin/diskutil", ["info", "-plist", "/dev/disk9"])
+
+    #expect(result.exitCode != 0)
+    #expect(result.standardError.contains("unstubbed"))
+    #expect(result.standardError.contains("/usr/sbin/diskutil info -plist /dev/disk9"))
+}
+
+@Test("a stubbed command still returns its stub unchanged")
+func stubbedCommandUnaffected() throws {
+    let runner = FakeCommandRunner()
+    runner.stub(standardOutput: "hello", for: "/bin/echo hello")
+
+    let result = try runner.run("/bin/echo", ["hello"])
+
+    #expect(result.exitCode == 0)
+    #expect(result.standardOutput == "hello")
 }
