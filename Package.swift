@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "MacOS_installer",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v13)],
     products: [
         .executable(name: "macos-installer", targets: ["macos-installer"]),
         .library(name: "MacOSInstallerKit", targets: ["MacOSInstallerKit"]),
