@@ -71,3 +71,28 @@ func throwsOnMissingIdentifier() throws {
         try DiskutilClient.parseInfo(data)
     }
 }
+
+@Test("reports missingInternalFlag for a plist without the Internal key")
+func throwsOnMissingInternalFlag() throws {
+    let data = try PropertyListSerialization.data(
+        fromPropertyList: [
+            "DeviceIdentifier": "disk5s1",
+            "VolumeName": "External"
+        ], format: .xml, options: 0
+    )
+
+    #expect(throws: DiskutilParseError.missingInternalFlag(deviceIdentifier: "disk5s1")) {
+        try DiskutilClient.parseInfo(data)
+    }
+}
+
+@Test("reads device identifiers from AllDisks and ignores the name-based VolumesFromDisks")
+func prefersAllDisksOverVolumeNames() throws {
+    let plist: [String: Any] = [
+        "AllDisks": ["disk3s1", "disk5s1"],
+        "VolumesFromDisks": ["Macintosh HD", "Untitled", "Untitled"],
+    ]
+    let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+
+    #expect(try DiskutilClient.parseVolumeIdentifiers(data) == ["disk3s1", "disk5s1"])
+}
