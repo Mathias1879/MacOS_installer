@@ -65,7 +65,12 @@ func throwsOnUnparsableVersion() throws {
 func ignoresTitleInsideAuxInfo() throws {
     let info = try DistributionParser.parse(fixture("title-in-auxinfo.dist"))
 
-    #expect(info.title == "macOS Correct Title")
+    // The fixture places the nested title BEFORE the document-level title.
+    // WITHOUT the `where !inAuxInfo` guard, the first title encountered
+    // (from inside auxinfo) would be captured, and the nil-check would
+    // prevent the correct document-level title from overwriting it.
+    // This ordering makes the test guard-dependent.
+    #expect(info.title == "macOS Sequoia")
 }
 
 @Test("clears pending key when encountering unexpected element type, preventing mis-pairing")
