@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <pkg-ref id="MajorOSInfo" packageIdentifier="com.apple.pkg.MajorOSInfo"/>
+    <pkg-ref id="InstallAssistant" packageIdentifier="com.apple.pkg.InstallAssistant.macOSSequoia"/>
+    <title>macOS Sequoia</title>
+    <options customize="never" require-scripts="false"/>
+    <auxinfo>
+        <dict>
+            <key>BUILD</key>
+            <string>24H23</string>
+            <key>VERSION</key>
+            <string>15.8</string>
+        </dict>
+    </auxinfo>
+</installer-gui-script>

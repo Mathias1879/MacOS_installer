@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>macOS Mystery</title>
+    <auxinfo>
+        <dict>
+            <key>BUILD</key>
+            <string>99A1</string>
+        </dict>
+    </auxinfo>
+</installer-gui-script>
