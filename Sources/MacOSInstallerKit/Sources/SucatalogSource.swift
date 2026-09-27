@@ -1,5 +1,15 @@
 import Foundation
 
+/// Errors specific to joining catalog products with their distribution
+/// metadata. Dropping any *one* product whose `.dist` is unavailable is
+/// normal and silent (see the brief); but if every installer-kind product in
+/// the catalog was dropped, that is very likely a CDN outage rather than
+/// Apple genuinely offering nothing, and the caller needs to be able to tell
+/// the two apart.
+public enum SucatalogSourceError: Error, Equatable, Sendable {
+    case allDistributionsUnavailable(productCount: Int)
+}
+
 /// Reads Apple's public software update catalog. Unlike `softwareupdate`, this
 /// is not filtered by host model, which is what allows an Apple silicon host to
 /// write media for an older Intel target.
@@ -21,7 +31,7 @@ public struct SucatalogSource: InstallerSource {
         // Distribution files are ~10 KB each and there are around twenty of
         // them. Fetch concurrently; a product whose .dist is unavailable is
         // dropped rather than failing the whole listing.
-        return await withTaskGroup(of: InstallerRelease?.self) { group in
+        let releases = await withTaskGroup(of: InstallerRelease?.self) { group in
             for product in products {
                 group.addTask { await release(for: product) }
             }
@@ -32,6 +42,14 @@ public struct SucatalogSource: InstallerSource {
             }
             return releases.sorted { $0.version > $1.version }
         }
+
+        // A single dropped product is normal; every product dropping is not,
+        // and must not be reported as "Apple has no releases available."
+        if releases.isEmpty, !products.isEmpty {
+            throw SucatalogSourceError.allDistributionsUnavailable(productCount: products.count)
+        }
+
+        return releases
     }
 
     private func release(for product: CatalogProduct) async -> InstallerRelease? {
