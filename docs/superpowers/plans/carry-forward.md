@@ -90,3 +90,35 @@ needed an injected seam before it could be proven at all.
 *modern* `.dist` file. Eleven tasks, 72 tests and four reviews of the parser all
 missed that legacy files put a localization key in `<title>` — visible within one
 second of rendering live catalog data.
+
+## Do first in Plan 3 (carried from Plan 2, Task 13)
+
+**`CommandRunner` needs a cancellable variant.** Long-running commands
+(`curl`, `createinstallmedia`) currently run via `Task.detached`, which does
+not inherit cancellation — Ctrl-C during a download is expected to leave the
+`curl` process running as an orphan after the CLI exits. See
+`docs/manual-verification.md` item 5. A cancellable variant is needed before
+this can be fixed rather than just documented.
+
+**Time Machine detection should use `APFSVolumeRole == "Backup"`, not name
+matching, and should probably refuse rather than warn.** `VolumeGuard`
+currently matches on `volumeName.localizedCaseInsensitiveContains("time
+machine")`, which both over- and under-matches a real Time Machine volume.
+
+**Mounted disk images are not refused.** `VolumeGuard` has no rule against a
+mounted `.dmg`/`.sparsebundle` volume being offered as an erase target.
+
+**`CatalogCache` is non-`Sendable`** while every other injected closure in
+the codebase is `@Sendable`. Inconsistent concurrency contract.
+
+**`ConfirmationPrompt` trims `.whitespaces` rather than
+`.whitespacesAndNewlines`.** A pasted or terminal-mangled name with a
+trailing newline could fail to match when it should, or in principle match
+when it shouldn't.
+
+**`selectRelease` takes the first version match and can hide a downloadable
+sibling build behind a `softwareUpdate`-only one.** `CreateCommand.
+selectRelease(from:)` returns `releases.first { $0.version.description ==
+version }` — if two releases share a version string and the first one found
+is `softwareUpdate`-only, a downloadable sibling with the same version is
+never reached even though it would satisfy the request.

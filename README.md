@@ -4,8 +4,10 @@ A macOS command-line tool that finds a requested version of macOS, downloads
 it from Apple, and writes a bootable offline installer to a USB drive or
 other external volume.
 
-This repository currently implements **version discovery**: finding every
-macOS version available to write, from three sources —
+This repository implements **version discovery** and **media creation**.
+
+Version discovery finds every macOS version available to write, from three
+sources —
 
 - an `Install macOS *.app` already present on disk,
 - `softwareupdate --list-full-installers` (filtered to what the host model
@@ -13,8 +15,47 @@ macOS version available to write, from three sources —
 - Apple's public software update catalog (unfiltered, so it can reach
   versions the host itself could never run).
 
-Media creation (download, assembly, and writing to a drive) is not yet built;
-see `docs/superpowers/plans/2026-09-26-version-discovery.md` for the roadmap.
+Media creation downloads the chosen version, verifies it against Apple's
+published digest, assembles `Install macOS X.app`, and writes it to an
+external drive with `createinstallmedia`.
+
+### What actually works today
+
+- Listing versions from all three sources (`list`).
+- Writing media for **macOS Big Sur (11) and later**, when the release is
+  downloadable as an `InstallAssistant.pkg` (the catalog or a local
+  `Install macOS *.app`).
+
+### What does not work yet
+
+- **Mojave and Catalina are listed but not writable.** They use a legacy,
+  chunked ESD payload layout whose assembly is unimplemented — that's a
+  later phase (see `docs/superpowers/plans/2026-09-26-media-creation.md`).
+  `create` will list these versions but fails explicitly, rather than
+  silently, if you try to write one.
+- **A `softwareUpdate`-only release cannot be downloaded directly.** If
+  `list` shows a version with no local or catalog payload, fetch it first
+  with `softwareupdate --fetch-full-installer`, then re-run `create` — it
+  will pick up the local copy.
+
+### Safety model
+
+- `create` **ERASES the target volume.** There is no "preview" mode once you
+  confirm.
+- Internal disks and the current boot volume (including its sealed system
+  snapshot) are **never offered as targets, with no override flag.** This is
+  an absolute refusal by design, not a default that can be bypassed.
+- A typed, exact confirmation of the target volume's name is required before
+  anything is erased (unless `--yes` is passed for scripted/trusted use).
+
+### Verified on
+
+**Not yet verified — see [`docs/manual-verification.md`](docs/manual-verification.md).**
+
+183 automated tests cover the logic, but nothing has been booted from real
+media yet: no USB stick has been written and tested end to end, on any Mac,
+of any era. Do not treat this tool as proven to produce bootable media until
+that checklist has been run and its results recorded.
 
 ## Requirements
 
@@ -27,7 +68,26 @@ see `docs/superpowers/plans/2026-09-26-version-discovery.md` for the roadmap.
 swift build
 swift run macos-installer list            # every version, including Apple's full catalog
 swift run macos-installer list --offline  # skip the network catalog; softwareupdate + local only
+
+# Write bootable media. THIS ERASES THE TARGET VOLUME.
+swift run macos-installer create --version 15.8.1 --volume "MyUSBDrive"
+
+# Omit --version or --volume to see the available options instead of guessing:
+swift run macos-installer create
 ```
+
+`create` will:
+
+1. download `InstallAssistant.pkg` for the requested version (resuming an
+   interrupted download rather than restarting it),
+2. verify it against Apple's published digest,
+3. run `installer` to assemble `Install macOS X.app` (admin password
+   required),
+4. ask you to type the target volume's exact name to confirm, then
+5. run `createinstallmedia --volume <mount point> --nointeraction` as root.
+
+Internal volumes and the current boot volume are never offered as targets —
+there is no flag to override this.
 
 ## Running tests
 
