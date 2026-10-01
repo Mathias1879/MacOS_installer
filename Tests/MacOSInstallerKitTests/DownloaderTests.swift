@@ -62,11 +62,13 @@ func throwsOnSizeMismatch() async throws {
     }
 }
 
-@Test("reports cumulative progress against the expected total")
-func reportsProgress() async throws {
+@Test("reports cumulative progress that accounts for bytes already on disk")
+func reportsProgressIncludingResumedBytes() async throws {
     let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
     let destination = dir.appendingPathComponent("InstallAssistant.pkg")
-    try Data("01234".utf8).write(to: destination)
+    // 3 bytes already present out of 10, so the resumed total (3 + 7 = 10)
+    // is distinguishable from the bytes transferred in this run (7).
+    try Data("012".utf8).write(to: destination)
     let transfer = FakeTransfer(payload: Data("0123456789".utf8))
 
     final class Box: @unchecked Sendable { var seen: [(Int64, Int64)] = [] }
@@ -77,7 +79,10 @@ func reportsProgress() async throws {
             box.seen.append((done, total))
         }
 
-    // Progress must account for the 5 bytes already on disk, not just the 5 transferred.
-    #expect(box.seen.last?.0 == 10)
-    #expect(box.seen.last?.1 == 10)
+    // Full sequence, not just the last value: the pre-transfer report must
+    // already account for the 3 bytes on disk, and the mid-transfer report
+    // must be 3 + 7, not 7. Asserting only `.last` cannot distinguish them,
+    // because the unconditional final callback is always (10, 10).
+    #expect(box.seen.map(\.0) == [3, 10, 10])
+    #expect(box.seen.allSatisfy { $0.1 == 10 })
 }
