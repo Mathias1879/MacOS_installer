@@ -42,9 +42,24 @@ private actor CurlTransferState {
 /// parsing curl's own progress meter, so this stays small and uses the same
 /// `CommandRunner` seam as every other external tool in this codebase.
 ///
-/// Not unit-tested: it touches the network. Its correctness rests on the
-/// manual verification checklist for this plan, which is also why it is kept
-/// deliberately small and obvious rather than clever.
+/// The end-to-end network transfer is not unit-tested — it touches the
+/// network, so its correctness otherwise rests on the manual verification
+/// checklist for this plan, which is also why it is kept deliberately small
+/// and obvious rather than clever. Argv construction and error translation
+/// are unit-tested via an injected `CommandRunner`.
+///
+/// KNOWN LIMITATION — cancellation does not reach curl: `curl` runs inside a
+/// `Task.detached` child task, and `Task.detached` neither inherits nor
+/// observes the calling task's cancellation. If the caller's task is
+/// cancelled (for example, the user presses Ctrl-C), this function's polling
+/// loop stops reporting progress and this call returns, but the underlying
+/// `curl` process keeps running in the background and will pull the entire
+/// remaining transfer on its own. The partial file curl is writing remains
+/// valid — a later `Downloader.download` call resumes from wherever curl
+/// left off, so nothing is corrupted — but the in-flight bandwidth use is
+/// not actually stopped. Fixing this properly requires threading
+/// cancellation through `CommandRunner` (a Plan 1 type with six existing
+/// call sites), which is out of scope here and deliberately deferred.
 public struct CurlResumableTransfer: ResumableTransfer {
     public static let defaultPollInterval: TimeInterval = 1
 
@@ -68,7 +83,13 @@ public struct CurlResumableTransfer: ResumableTransfer {
         startingAt offset: Int64,
         progress: @Sendable (Int64) -> Void
     ) async throws {
-        let arguments = ["-L", "-C", "-", "--fail", "--output", destination.path, url.absoluteString]
+        // `--` marks the end of options so curl cannot misread the URL as a
+        // flag if it ever began with `-`. The URL is built internally today
+        // (never user-supplied), but this is a one-token defence that does
+        // not rely on that staying true.
+        let arguments = [
+            "-L", "-C", "-", "--fail", "--output", destination.path, "--", url.absoluteString,
+        ]
         let state = CurlTransferState()
         let commandRunner = self.commandRunner
         let curlExecutable = self.curlExecutable
@@ -96,7 +117,16 @@ public struct CurlResumableTransfer: ResumableTransfer {
             throw DownloadError.transferFailed("curl finished without reporting a result")
         }
 
-        let result = try outcome.get()
+        let result: CommandResult
+        do {
+            result = try outcome.get()
+        } catch {
+            // Every failure out of this type comes back as a DownloadError,
+            // regardless of what CommandRunner threw (e.g. CommandError
+            // .launchFailed if the curl binary is missing or unlaunchable).
+            throw DownloadError.transferFailed("curl failed to launch: \(error)")
+        }
+
         guard result.exitCode == 0 else {
             throw DownloadError.transferFailed(
                 "curl exited \(result.exitCode): \(result.standardError)"
