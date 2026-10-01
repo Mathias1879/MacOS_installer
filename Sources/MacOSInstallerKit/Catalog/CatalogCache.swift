@@ -23,10 +23,16 @@ public struct CatalogCache {
         let entry = directory.appendingPathComponent(key)
         guard
             let attributes = try? FileManager.default.attributesOfItem(atPath: entry.path),
-            let modified = attributes[.modificationDate] as? Date,
-            clock().timeIntervalSince(modified) <= Self.ttl,
-            let data = try? Data(contentsOf: entry)
+            let modified = attributes[.modificationDate] as? Date
         else { return nil }
+
+        let age = clock().timeIntervalSince(modified)
+        // A negative age means the file is dated in the future — clock skew, a
+        // restored backup, a file from another machine. Treat it as unusable
+        // rather than fresh, or it would never expire.
+        guard age >= 0, age <= Self.ttl else { return nil }
+
+        guard let data = try? Data(contentsOf: entry) else { return nil }
         return data
     }
 
@@ -34,6 +40,13 @@ public struct CatalogCache {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let entry = directory.appendingPathComponent(key)
         try data.write(to: entry, options: .atomic)
-        try FileManager.default.setAttributes([.modificationDate: clock()], ofItemAtPath: entry.path)
+        do {
+            try FileManager.default.setAttributes([.modificationDate: clock()], ofItemAtPath: entry.path)
+        } catch {
+            // Leaving the file behind would mean a later load judging its age
+            // from the filesystem clock instead of the injected one.
+            try? FileManager.default.removeItem(at: entry)
+            throw error
+        }
     }
 }

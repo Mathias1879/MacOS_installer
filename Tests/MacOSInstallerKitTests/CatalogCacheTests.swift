@@ -54,3 +54,16 @@ func missingKeyReturnsNil() throws {
 
     #expect(CatalogCache(directory: dir, clock: { Date() }).load(key: "absent") == nil)
 }
+
+@Test("returns nil for a cache file dated in the future")
+func futureFilesAreRejected() throws {
+    let dir = try tempDirectory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    var now = Date(timeIntervalSince1970: 1_000_000)
+    let cache = CatalogCache(directory: dir, clock: { now })
+
+    try cache.store(Data("catalog".utf8), key: "sucatalog")
+    now = now.addingTimeInterval(-3_600)   // move clock backwards one hour
+
+    #expect(cache.load(key: "sucatalog") == nil)
+}
