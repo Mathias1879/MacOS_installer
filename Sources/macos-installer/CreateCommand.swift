@@ -69,12 +69,30 @@ struct CreateCommand: AsyncParsableCommand {
             protectedPaths: [protectedCacheDirectory]
         )
 
-        let target = try resolveTarget(from: decisions)
+        let targetDecision = try resolveTarget(from: decisions)
+        let target = targetDecision.volume
+
+        // The warning is the only thing a `selectableWithWarning` volume
+        // carries that a bare erase message does not — it must be shown here,
+        // immediately above the confirmation, which is the one moment it can
+        // still change the user's mind. `VolumeTableFormatter` also renders
+        // it, but only on the listing path; a targeted `--volume` never goes
+        // through that path at all.
+        if case .selectableWithWarning(let warning) = targetDecision.verdict {
+            print("  ⚠ \(warning)")
+        }
 
         print("")
         print("  This will ERASE \(target.displayName) (\(target.deviceIdentifier)).")
         print("  Everything on it will be destroyed.")
         print("")
+
+        // Checked before the prompt, not after: the user should learn the
+        // volume cannot be targeted before typing its name, not after.
+        guard let uuid = target.volumeUUID else {
+            print("  That volume has no stable identifier, so it cannot be targeted safely.")
+            throw ExitCode.failure
+        }
 
         if !yes {
             print("  Type the volume name to confirm: ", terminator: "")
@@ -82,11 +100,6 @@ struct CreateCommand: AsyncParsableCommand {
                 print("  Names did not match. Nothing was changed.")
                 throw ExitCode.failure
             }
-        }
-
-        guard let uuid = target.volumeUUID else {
-            print("  That volume has no stable identifier, so it cannot be targeted safely.")
-            throw ExitCode.failure
         }
 
         print("  Preparing \(release.name) \(release.version)…")
@@ -121,7 +134,7 @@ struct CreateCommand: AsyncParsableCommand {
     /// Resolves `--volume` to exactly one target, refusing on no match or on
     /// an ambiguous match rather than guessing. See `VolumeTargetResolver` for
     /// why an ambiguous match must never silently resolve to the first hit.
-    private func resolveTarget(from decisions: [VolumeGuard.VolumeDecision]) throws -> Volume {
+    private func resolveTarget(from decisions: [VolumeGuard.VolumeDecision]) throws -> VolumeGuard.VolumeDecision {
         guard let volume else {
             print(VolumeTableFormatter.render(decisions))
             print("\nPick one with --volume <name or device identifier>.")
@@ -154,8 +167,14 @@ struct CreateCommand: AsyncParsableCommand {
 
         do {
             return try await preparer.prepare(release) { message in print("  \(message)") }
-        } catch let error as InstallerPreparationError {
-            print("  \(error.userMessage)")
+        } catch {
+            // Caught broadly, not just `InstallerPreparationError`: a digest
+            // mismatch, a download failure, an assembly failure, or even a
+            // raw `CommandError` leaking out of a lower layer must all reach
+            // the user as a plain-language message that states the drive was
+            // not touched — this is the longer and likelier-to-fail path,
+            // and it runs AFTER the user has already confirmed an erase.
+            print("  \(PreparationErrorFormatter.render(error))")
             throw ExitCode.failure
         }
     }

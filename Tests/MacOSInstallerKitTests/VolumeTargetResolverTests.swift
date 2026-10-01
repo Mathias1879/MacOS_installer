@@ -45,7 +45,7 @@ func deviceIdentifierMatchIsUnambiguousDespiteNameCollision() {
         Issue.record("expected .unique, got \(resolution)")
         return
     }
-    #expect(found.deviceIdentifier == "disk6s2")
+    #expect(found.volume.deviceIdentifier == "disk6s2")
 }
 
 @Test("a name matching exactly one volume resolves uniquely")
@@ -54,7 +54,7 @@ func uniqueNameMatchResolves() {
 
     let resolution = VolumeTargetResolver.resolve(matching: "SanDisk Ultra", among: decisions)
 
-    #expect(resolution == .unique(decisions[0].volume))
+    #expect(resolution == .unique(decisions[0]))
 }
 
 @Test("no match returns none")
@@ -77,5 +77,18 @@ func warnedVolumeCanBeMatched() {
     let decisions = [vol("disk6s1", "Time Machine Backups", verdict: .selectableWithWarning("warn"))]
 
     #expect(VolumeTargetResolver.resolve(matching: "Time Machine Backups", among: decisions)
-        == .unique(decisions[0].volume))
+        == .unique(decisions[0]))
+}
+
+@Test("resolving by name surfaces the warning verdict, not just the volume")
+func uniqueMatchCarriesItsWarningVerdict() {
+    let decisions = [vol("disk6s1", "Time Machine Backups", verdict: .selectableWithWarning("looks like a backup"))]
+
+    let resolution = VolumeTargetResolver.resolve(matching: "Time Machine Backups", among: decisions)
+
+    guard case .unique(let found) = resolution else {
+        Issue.record("expected .unique, got \(resolution)")
+        return
+    }
+    #expect(found.verdict == .selectableWithWarning("looks like a backup"))
 }

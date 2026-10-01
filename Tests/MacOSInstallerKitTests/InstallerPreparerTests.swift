@@ -145,6 +145,34 @@ func installAssistantWithWrongDigestFailsBeforeAssembling() async throws {
     #expect(assembler.invocations.isEmpty)
 }
 
+@Test("deletes the cached package when its digest does not match, so a future run re-downloads instead of failing forever")
+func digestMismatchDeletesTheCorruptedPackage() async throws {
+    let cacheDir = try tempDir(); defer { try? FileManager.default.removeItem(at: cacheDir) }
+    let payloadBytes = Data("pkg-bytes".utf8)
+    let wrongDigest = String(repeating: "0", count: 40)
+    let build = "25G229"
+    let expectedPkg = cacheDir.appendingPathComponent("InstallAssistant-\(build).pkg")
+
+    let transfer = FakeTransfer(payload: payloadBytes)
+    let assembler = FakeAssembler(outcome: .failure(StubAssemblerError.shouldNotHaveBeenCalled))
+    let preparer = InstallerPreparer(
+        downloader: Downloader(transfer: transfer),
+        assembler: assembler,
+        cacheDirectory: cacheDir
+    )
+
+    let url = URL(string: "https://swcdn.apple.com/x/InstallAssistant.pkg")!
+    await #expect(throws: (any Error).self) {
+        _ = try await preparer.prepare(
+            release(
+                payload: .installAssistant(url: url), sizeBytes: Int64(payloadBytes.count), digest: wrongDigest
+            )
+        ) { _ in }
+    }
+
+    #expect(FileManager.default.fileExists(atPath: expectedPkg.path) == false)
+}
+
 @Test("fails clearly, not with a crash, for a legacy ESD payload")
 func legacyESDFailsClearly() async throws {
     let transfer = FakeTransfer(payload: Data())

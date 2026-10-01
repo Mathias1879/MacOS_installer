@@ -82,7 +82,19 @@ public struct InstallerPreparer {
 
         if let digest = release.digest {
             progress("Checking the download…")
-            try DigestVerifier.verify(fileAt: pkg, matches: digest)
+            do {
+                try DigestVerifier.verify(fileAt: pkg, matches: digest)
+            } catch {
+                // `Downloader` skips the transfer entirely once a file of the
+                // expected size exists on disk. Leaving a wrong-but-right-sized
+                // file in the cache would make every future run fail with the
+                // same digest mismatch, forever, with no visible cause — so
+                // delete it and let the next run fetch a fresh copy. The
+                // deletion itself is best-effort: if it fails, the original
+                // digest error is still the one that matters to the caller.
+                try? fileManager.removeItem(at: pkg)
+                throw error
+            }
         }
 
         progress("Installing the macOS installer app (this needs your password)…")

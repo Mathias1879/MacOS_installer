@@ -132,6 +132,34 @@ func abortsWhenAuthenticationFails() {
     #expect(runner.didInvoke(containing: "createinstallmedia") == false)
 }
 
+/// Stands in for a `sudo` that cannot be launched at all (as opposed to one
+/// that launches and exits non-zero, already covered by
+/// `abortsWhenAuthenticationFails`).
+private struct ThrowingAuthRunner: CommandRunner, Sendable {
+    func run(_ executable: String, _ arguments: [String]) throws -> CommandResult {
+        throw CommandError.launchFailed(executable: executable, reason: "no such file")
+    }
+}
+
+@Test("wraps a sudo launch failure as authenticationFailed, so CommandError cannot leak past the MediaWriteError catch")
+func wrapsSudoLaunchFailureAsAuthenticationFailed() {
+    do {
+        try InstallMediaWriter(runner: ThrowingAuthRunner()).write(
+            installerApp: app, toVolumeWithUUID: targetUUID,
+            expectedDeviceIdentifier: "disk5s1", progress: { _ in }
+        )
+        Issue.record("expected write(installerApp:) to throw")
+    } catch let error as MediaWriteError {
+        guard case .authenticationFailed(let message) = error else {
+            Issue.record("expected .authenticationFailed, got \(error)")
+            return
+        }
+        #expect(message.contains("sudo could not be run"))
+    } catch {
+        Issue.record("expected a MediaWriteError, but CommandError leaked out instead: \(error)")
+    }
+}
+
 @Test("passes a mount point containing spaces as a single argument")
 func mountPointWithSpacesStaysOneArgument() throws {
     let runner = FakeCommandRunner()

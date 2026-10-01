@@ -55,7 +55,18 @@ public struct InstallMediaWriter {
         // volume mounted at the same path — while the prompt is up. This
         // machine already has two volumes named "Untitled", so a same-name,
         // same-path remount during that wait is not a hypothetical.
-        let auth = try runner.run(Self.sudoPath, ["-v"])
+        // Wrapped rather than a bare `try`: a launch failure here (e.g. sudo
+        // missing from PATH) would otherwise surface as a raw `CommandError`
+        // instead of `MediaWriteError`, which is the one type callers catch
+        // to render an honest "was the drive touched?" message. A launch
+        // failure happens before anything is written, exactly like a
+        // non-zero exit from sudo itself, so both map to the same case.
+        let auth: CommandResult
+        do {
+            auth = try runner.run(Self.sudoPath, ["-v"])
+        } catch {
+            throw MediaWriteError.authenticationFailed(message: "sudo could not be run: \(error)")
+        }
         guard auth.exitCode == 0 else {
             throw MediaWriteError.authenticationFailed(
                 message: auth.standardError.trimmingCharacters(in: .whitespacesAndNewlines)

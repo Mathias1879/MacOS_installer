@@ -19,7 +19,12 @@ import Foundation
 /// are unique per volume.
 public enum VolumeTargetResolver {
     public enum Resolution: Equatable, Sendable {
-        case unique(Volume)
+        /// Carries the whole decision, not just the `Volume` — callers need
+        /// the verdict too. A volume that is `.selectableWithWarning` must
+        /// still surface its warning at the one moment it matters (right
+        /// before the user confirms an erase), and a bare `Volume` throws
+        /// that information away.
+        case unique(VolumeGuard.VolumeDecision)
         case ambiguous([VolumeGuard.VolumeDecision])
         case none
     }
@@ -34,7 +39,7 @@ public enum VolumeTargetResolver {
         if let byIdentifier = decisions.first(where: {
             $0.volume.deviceIdentifier == query && isSelectable($0.verdict)
         }) {
-            return .unique(byIdentifier.volume)
+            return .unique(byIdentifier)
         }
 
         let nameMatches = decisions.filter {
@@ -43,7 +48,7 @@ public enum VolumeTargetResolver {
 
         switch nameMatches.count {
         case 0: return .none
-        case 1: return .unique(nameMatches[0].volume)
+        case 1: return .unique(nameMatches[0])
         default: return .ambiguous(nameMatches)
         }
     }
