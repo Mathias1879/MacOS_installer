@@ -68,6 +68,7 @@ func buildsReleasesFromCatalogAndDistributions() async throws {
     #expect(sequoia.version == OSVersion("15.8"))
     #expect(sequoia.origin == .sucatalog)
     #expect(sequoia.payload == .installAssistant(url: URL(string: "https://swcdn.apple.com/x/InstallAssistant.pkg")!))
+    #expect(sequoia.digest == "01e1be1b5ea751633fdeb70c3824e56b76d2cf1a")
 
     let catalina = try #require(releases.first { $0.build == "19H15" })
     #expect(catalina.name == "macOS Catalina")

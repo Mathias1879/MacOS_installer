@@ -77,7 +77,8 @@ public struct SucatalogSource: InstallerSource {
             build: info.build,
             sizeBytes: product.totalSize,
             origin: .sucatalog,
-            payload: payload
+            payload: payload,
+            digest: product.installAssistantDigest
         )
     }
 }

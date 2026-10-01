@@ -39,7 +39,7 @@ public enum SucatalogClient {
                 let url = URL(string: urlString),
                 let size = (package["Size"] as? NSNumber)?.int64Value
             else { return nil }
-            return CatalogPackage(url: url, size: size)
+            return CatalogPackage(url: url, size: size, digest: package["Digest"] as? String)
         }
 
         let distributions = entry["Distributions"] as? [String: String]
