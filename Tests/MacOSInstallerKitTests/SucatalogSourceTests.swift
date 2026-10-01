@@ -73,6 +73,9 @@ func buildsReleasesFromCatalogAndDistributions() async throws {
     let catalina = try #require(releases.first { $0.build == "19H15" })
     #expect(catalina.name == "macOS Catalina")
     #expect(catalina.version == OSVersion("10.15.7"))
+    // The legacy product has no Digest in the catalog, and that must survive
+    // the whole product -> release path, not just the package parse.
+    #expect(catalina.digest == nil)
 }
 
 @Test("throws when every catalog product's distribution is unavailable")
