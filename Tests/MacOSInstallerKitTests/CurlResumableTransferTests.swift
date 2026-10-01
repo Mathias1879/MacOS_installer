@@ -30,7 +30,8 @@ func curlArgvIncludesDoubleDashBeforeURL() async throws {
     // arguments as a separate string and array, so there is no shell join to
     // misparse in the first place — this pins the array curl actually sees.
     let expectedArguments = [
-        "-L", "-C", "-", "--fail", "--output", destination.path, "--", remote.absoluteString,
+        "--no-progress-meter", "-L", "-C", "-", "--fail", "--output", destination.path, "--",
+        remote.absoluteString,
     ]
     fake.stub(
         CommandResult(exitCode: 0, standardOutput: "", standardError: ""),

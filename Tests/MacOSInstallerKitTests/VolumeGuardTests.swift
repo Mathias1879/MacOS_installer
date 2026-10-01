@@ -188,3 +188,17 @@ func negativeRequiredBytesStillRequiresHeadroom() {
     )
     #expect(verdict(for: exact, required: -5) == .selectable)
 }
+
+@Test("--yes does not skip the typed confirmation for a warned (e.g. Time Machine) volume")
+func yesDoesNotSkipConfirmationForWarnedVolume() {
+    let warned = VolumeGuard.Verdict.selectableWithWarning("This looks like a Time Machine backup.")
+
+    #expect(VolumeGuard.requiresTypedConfirmation(yesFlag: true, verdict: warned) == true)
+    #expect(VolumeGuard.requiresTypedConfirmation(yesFlag: false, verdict: warned) == true)
+}
+
+@Test("--yes skips the typed confirmation for an ordinary selectable volume")
+func yesSkipsConfirmationForOrdinaryVolume() {
+    #expect(VolumeGuard.requiresTypedConfirmation(yesFlag: true, verdict: .selectable) == false)
+    #expect(VolumeGuard.requiresTypedConfirmation(yesFlag: false, verdict: .selectable) == true)
+}

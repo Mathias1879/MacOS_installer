@@ -75,9 +75,24 @@ public struct InstallerPreparer {
         try fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
         let pkg = cacheDirectory.appendingPathComponent("InstallAssistant-\(release.build).pkg")
 
-        try await downloader.download(from: url, to: pkg, expectedBytes: release.sizeBytes) { done, total in
-            let percent = total > 0 ? Int(done * 100 / total) : 0
-            progress("Downloading… \(percent)%")
+        do {
+            try await downloader.download(from: url, to: pkg, expectedBytes: release.sizeBytes) { done, total in
+                let percent = total > 0 ? Int(done * 100 / total) : 0
+                progress("Downloading… \(percent)%")
+            }
+        } catch let error as DownloadError {
+            // A size mismatch means `Downloader` found a wrong-but-present
+            // file on disk and skipped the transfer entirely (it only
+            // transfers when `alreadyHave < expectedBytes`). Left in place,
+            // that file wedges every future run behind the identical error
+            // forever. Delete it so the next run re-downloads from scratch,
+            // exactly as already done for a digest mismatch below. Deletion
+            // is best-effort: if it fails, the original error is still the
+            // one that matters to the caller.
+            if case .sizeMismatch = error {
+                try? fileManager.removeItem(at: pkg)
+            }
+            throw error
         }
 
         if let digest = release.digest {

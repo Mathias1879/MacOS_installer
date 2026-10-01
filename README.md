@@ -19,12 +19,23 @@ Media creation downloads the chosen version, verifies it against Apple's
 published digest, assembles `Install macOS X.app`, and writes it to an
 external drive with `createinstallmedia`.
 
-### What actually works today
+That digest check is **integrity, not authenticity**: it confirms the
+downloaded bytes were not truncated or corrupted in transit, not that they
+came from Apple. The digest algorithm is SHA-1, which is collision-broken, so
+it is not a substitute for a trust check. Authenticity instead comes from
+`installer`, which verifies Apple's code signature on the package during
+assembly and refuses to proceed if it does not check out.
+
+### What is implemented
 
 - Listing versions from all three sources (`list`).
 - Writing media for **macOS Big Sur (11) and later**, when the release is
   downloadable as an `InstallAssistant.pkg` (the catalog or a local
-  `Install macOS *.app`).
+  `Install macOS *.app`) — **implemented, but unproven.** `create` runs
+  `createinstallmedia --nointeraction`, and that flag's behavior has never
+  been verified against a real run: if `createinstallmedia` rejects it, or
+  behaves differently than expected under it, the write path may not work at
+  all. See "Verified on" below before relying on this for a real install.
 
 ### What does not work yet
 
@@ -78,13 +89,20 @@ swift run macos-installer create
 
 `create` will:
 
-1. download `InstallAssistant.pkg` for the requested version (resuming an
+1. ask you to type the target volume's exact name to confirm, then
+2. download `InstallAssistant.pkg` for the requested version (resuming an
    interrupted download rather than restarting it),
-2. verify it against Apple's published digest,
-3. run `installer` to assemble `Install macOS X.app` (admin password
-   required),
-4. ask you to type the target volume's exact name to confirm, then
+3. verify it against Apple's published digest,
+4. run `installer` to assemble `Install macOS X.app` (admin password
+   required), then
 5. run `createinstallmedia --volume <mount point> --nointeraction` as root.
+
+**Confirmation happens first, before anything is downloaded or prepared.**
+Once you type the volume's name, the erase at step 5 is already consented to
+and will run unattended at the end of a potentially 30+ minute download and
+assembly, with no further prompt. Do not assume that because the download is
+still running nothing has been committed yet, and do not swap or unplug
+drives during that window — the target was already chosen and confirmed.
 
 Internal volumes and the current boot volume are never offered as targets —
 there is no flag to override this.

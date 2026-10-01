@@ -71,6 +71,15 @@ and nothing changes.
       `diskutil info` afterward — same volume name, same UUID, same content).
   - Observed: ________________________________________________
 
+- [ ] **Time Machine warning fires against a genuinely Time-Machine-named
+      volume.** Rename the spare drive from Preconditions to something
+      containing "Time Machine" (e.g. `Time Machine Backups`) and run
+      `create` targeting it. Confirm the `⚠ This looks like a Time Machine
+      backup.` warning is printed above the confirmation prompt — then abort
+      by typing a non-matching name. Do not proceed to a confirmed erase for
+      this check; it only needs to reach and show the warning.
+  - Observed: ________________________________________________
+
 ---
 
 ## Section B — Destructive (spare drive only)
@@ -190,6 +199,86 @@ run re-downloads it. Never observed end to end.
       that the *next* run re-downloads successfully and assembles correctly
       — rather than repeating the same digest failure forever.
 - Observed: ________________________________________________
+
+### 9. Size-mismatch recovery, end to end
+
+`InstallerPreparer` now deletes a cached package on a size mismatch too, not
+only on a digest mismatch (see the fix for the oversized/stale-cache wedge).
+Never observed end to end.
+
+- [ ] Force a size mismatch (e.g. truncate the cached
+      `InstallAssistant-<build>.pkg`, or substitute a same-or-larger-but-wrong
+      -length file at that path, so `Downloader` sees `alreadyHave >=
+      expectedBytes`, skips the transfer, and the final size check fails).
+- [ ] Run `create` again for the same version.
+- [ ] Confirm the error message names the full path of the cached file, that
+      the file is deleted, and that the *next* run re-downloads successfully
+      — rather than failing identically forever.
+- Observed: ________________________________________________
+
+### 10. Download progress does not freeze (Finding 1 regression check)
+
+Before the concurrent-pipe-drain fix, curl's stderr progress meter could fill
+the ~64 KB pipe buffer in roughly 10 minutes and deadlock the whole download,
+which looked like a frozen/stale percentage rather than a crash or error.
+
+- [ ] Start `create` for a version requiring a real download and watch the
+      `Downloading… NN%` line for its full duration.
+- [ ] Confirm the percentage visibly advances throughout — in particular,
+      past the ~10-minute mark — rather than freezing at a stale value while
+      the process appears to still be running.
+- [ ] If it freezes, do not assume this is fixed just because the automated
+      `CommandRunnerTests` deadlock test passes — that test proves the
+      mechanism is fixed in isolation, not that nothing else in this path can
+      still freeze.
+- Observed: ________________________________________________
+
+### 11. sudo's `Password:` prompt, given both pipes are now captured
+
+`RealCommandRunner` redirects both stdout and stderr to pipes it reads itself
+(necessary for the Finding 1 fix). Confirm that redirection does not also
+swallow the interactive password prompt `createinstallmedia`/`installer`
+need from the user.
+
+- [ ] During a real `create` run that reaches the assembly or write step,
+      confirm the `Password:` prompt is visible in the terminal and that
+      typing the password works normally.
+- [ ] If the prompt is missing, garbled, or input does not reach it, this is
+      a regression from pipe capture and blocks the destructive steps below
+      until fixed.
+- Observed: ________________________________________________
+
+### 12. Output visibility during the `createinstallmedia` write
+
+The 20–45 minute `createinstallmedia` write is the step most likely to look
+hung even when it is working, especially now that its stdout/stderr are
+captured rather than inherited.
+
+- [ ] During a real write, note whether any output appears on the terminal
+      while it runs, or whether the terminal shows nothing for the full
+      duration.
+- [ ] If nothing appears, confirm (e.g. via `ps aux` or by waiting it out)
+      that the process is still progressing and not actually hung — and note
+      this so a future UX pass can add a heartbeat if the silence is
+      genuinely indistinguishable from a hang.
+- Observed: ________________________________________________
+
+### 13. `--yes` end to end
+
+No row previously exercised `--yes` at all, even though it is the flag that
+removes the primary safety control (the typed-name prompt) for the common
+case.
+
+- [ ] Run `create --yes` targeting the spare drive (a volume that is
+      *selectable*, not warned). Confirm no typed-name prompt appears and the
+      erase proceeds directly after the pre-erase warning text.
+- [ ] Separately, rename the spare drive to contain "Time Machine" and run
+      `create --yes` targeting it. Confirm the typed-name prompt **still
+      appears** despite `--yes` — this is the Finding 3 fix: `--yes` must not
+      remove the control a flagged volume requires. Abort with a
+      non-matching name rather than completing this erase.
+- Observed (plain volume, --yes skipped prompt? Y/N): ___________
+- Observed (Time-Machine-named volume, --yes still prompted? Y/N): ______
 
 ---
 

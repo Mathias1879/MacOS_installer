@@ -40,8 +40,10 @@ public enum PreparationErrorFormatter {
 
     private static func describe(_ error: DownloadError) -> String {
         switch error {
-        case .sizeMismatch(let expected, let actual):
-            return "The download did not finish correctly: expected \(expected) bytes but got \(actual)."
+        case .sizeMismatch(let expected, let actual, let path):
+            return "The download did not finish correctly: expected \(expected) bytes but got \(actual) "
+                + "at \(path). It has been deleted, so it will be downloaded again next time rather than "
+                + "reused."
         case .transferFailed(let message):
             return "The download failed: \(message)"
         }

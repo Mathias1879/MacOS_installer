@@ -87,8 +87,15 @@ public struct CurlResumableTransfer: ResumableTransfer {
         // flag if it ever began with `-`. The URL is built internally today
         // (never user-supplied), but this is a one-token defence that does
         // not rely on that staying true.
+        //
+        // `--no-progress-meter` suppresses curl's periodic progress text on
+        // stderr. Without it, curl can emit well over the ~64 KB pipe buffer
+        // during an 18 GB download, which — independent of this flag — is
+        // why `RealCommandRunner` must also drain stdout and stderr
+        // concurrently rather than relying on suppression alone.
         let arguments = [
-            "-L", "-C", "-", "--fail", "--output", destination.path, "--", url.absoluteString,
+            "--no-progress-meter", "-L", "-C", "-", "--fail", "--output", destination.path, "--",
+            url.absoluteString,
         ]
         let state = CurlTransferState()
         let commandRunner = self.commandRunner

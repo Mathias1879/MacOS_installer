@@ -56,7 +56,7 @@ func throwsOnSizeMismatch() async throws {
     let destination = dir.appendingPathComponent("InstallAssistant.pkg")
     let transfer = FakeTransfer(payload: Data("0123".utf8))
 
-    await #expect(throws: DownloadError.sizeMismatch(expected: 10, actual: 4)) {
+    await #expect(throws: DownloadError.sizeMismatch(expected: 10, actual: 4, path: destination.path)) {
         _ = try await Downloader(transfer: transfer)
             .download(from: remote, to: destination, expectedBytes: 10) { _, _ in }
     }

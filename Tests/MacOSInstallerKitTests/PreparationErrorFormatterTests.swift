@@ -33,10 +33,19 @@ func downloadFailureStatesDriveNotTouched() {
 @Test("a size-mismatch download failure states plainly that the drive was not touched")
 func sizeMismatchStatesDriveNotTouched() {
     let message = PreparationErrorFormatter.render(
-        DownloadError.sizeMismatch(expected: 100, actual: 40)
+        DownloadError.sizeMismatch(expected: 100, actual: 40, path: "/tmp/InstallAssistant-25G229.pkg")
     )
 
     #expect(message.contains("The drive was not touched"))
+}
+
+@Test("a size-mismatch download failure includes the cached file's path so the user can find and remove it")
+func sizeMismatchIncludesPath() {
+    let message = PreparationErrorFormatter.render(
+        DownloadError.sizeMismatch(expected: 100, actual: 40, path: "/tmp/InstallAssistant-25G229.pkg")
+    )
+
+    #expect(message.contains("/tmp/InstallAssistant-25G229.pkg"))
 }
 
 @Test("an assembly failure states plainly that the drive was not touched")

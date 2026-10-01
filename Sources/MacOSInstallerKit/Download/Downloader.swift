@@ -1,7 +1,7 @@
 import Foundation
 
 public enum DownloadError: Error, Equatable {
-    case sizeMismatch(expected: Int64, actual: Int64)
+    case sizeMismatch(expected: Int64, actual: Int64, path: String)
     case transferFailed(String)
 }
 
@@ -34,7 +34,7 @@ public struct Downloader {
 
         let finalSize = fileManager.fileSize(at: destination)
         guard finalSize == expectedBytes else {
-            throw DownloadError.sizeMismatch(expected: expectedBytes, actual: finalSize)
+            throw DownloadError.sizeMismatch(expected: expectedBytes, actual: finalSize, path: destination.path)
         }
 
         progress(finalSize, expectedBytes)

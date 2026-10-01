@@ -94,7 +94,10 @@ struct CreateCommand: AsyncParsableCommand {
             throw ExitCode.failure
         }
 
-        if !yes {
+        // `--yes` must never remove the typed-name control the spec requires
+        // for a flagged (e.g. Time Machine-named) volume — see
+        // `VolumeGuard.requiresTypedConfirmation`.
+        if VolumeGuard.requiresTypedConfirmation(yesFlag: yes, verdict: targetDecision.verdict) {
             print("  Type the volume name to confirm: ", terminator: "")
             guard ConfirmationPrompt.requireTypedName(target.displayName) else {
                 print("  Names did not match. Nothing was changed.")

@@ -52,6 +52,21 @@ public enum VolumeGuard {
         public let verdict: Verdict
     }
 
+    /// Whether the typed-name confirmation must still be shown, even when the
+    /// caller passed `--yes`.
+    ///
+    /// The spec's Safety Model lists a flagged volume (for example, one that
+    /// looks like a Time Machine backup) as "Listed, flagged, requires typed
+    /// name" — the typed prompt IS that row's control. `--yes` exists to skip
+    /// confirmation for the ordinary case; it must not also silently remove
+    /// the one control the spec requires for a warned volume, so a
+    /// `.selectableWithWarning` verdict always requires the typed
+    /// confirmation regardless of `yesFlag`.
+    public static func requiresTypedConfirmation(yesFlag: Bool, verdict: Verdict) -> Bool {
+        if case .selectableWithWarning = verdict { return true }
+        return !yesFlag
+    }
+
     /// `requiredBytes` is the installer's own size; headroom is added here so
     /// callers cannot forget it.
     public static func evaluate(
