@@ -5,6 +5,54 @@ public enum AssemblyError: Error, Equatable {
     case applicationNotFound(String)
 }
 
+/// Both cases are raised from `InstallAssistantAssembler.assemble`, which
+/// installs the downloaded package into `/Applications` — entirely separate
+/// from, and strictly before, `InstallMediaWriter` is ever constructed. So
+/// both can truthfully say the drive was not touched, and must say so
+/// explicitly, because by the time this runs the user has already confirmed
+/// the erase.
+extension AssemblyError: Explainable {
+    public var explanation: UserFacingError {
+        switch self {
+        case .installerFailed(let exitCode, let message):
+            return UserFacingError(
+                title: "Installing the installer app failed",
+                whatHappened: "Assembling the installer application failed: \(message). "
+                    + "The drive was not touched.",
+                whatItMeans: "The `installer` tool macOS uses to unpack the downloaded package "
+                    + "exited with an error before it finished.",
+                whatToDoNext: [
+                    "Run this command again",
+                    "If it keeps failing, check that you have enough free space in /Applications",
+                ]
+            )
+
+        case .applicationNotFound(let name):
+            return UserFacingError(
+                title: "The installer app wasn't where it should be",
+                whatHappened: "The installer application \"\(name)\" was not found after assembly "
+                    + "completed. The drive was not touched.",
+                whatItMeans: "Assembly reported success but the expected app isn't in /Applications, "
+                    + "which usually means the release name doesn't match what Apple's installer "
+                    + "actually produces.",
+                whatToDoNext: [
+                    "Check /Applications for an installer app under a different name",
+                    "Run this command again",
+                ]
+            )
+        }
+    }
+
+    public var technicalDetail: String {
+        switch self {
+        case .installerFailed(let exitCode, let message):
+            return "AssemblyError.installerFailed exitCode=\(exitCode) message=\(message)"
+        case .applicationNotFound(let name):
+            return "AssemblyError.applicationNotFound name=\(name)"
+        }
+    }
+}
+
 /// Applies `InstallAssistant.pkg` with `installer`, which writes
 /// `Install macOS X.app` into /Applications.
 ///

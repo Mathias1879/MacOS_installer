@@ -38,6 +38,29 @@ func explanationsDoNotBlameTheReader() {
     ]
     rendered += preparationErrors.map { $0.explanation.rendered() }
 
+    let downloadErrors: [DownloadError] = [
+        .sizeMismatch(expected: 100, actual: 40, path: "/tmp/x.pkg"),
+        .transferFailed("curl exited 7"),
+    ]
+    rendered += downloadErrors.map { $0.explanation.rendered() }
+
+    let digestErrors: [DigestError] = [
+        .mismatch(expected: "aaaa", actual: "bbbb"),
+        .unreadable("/tmp/x.pkg"),
+    ]
+    rendered += digestErrors.map { $0.explanation.rendered() }
+
+    let assemblyErrors: [AssemblyError] = [
+        .installerFailed(exitCode: 1, message: "installer: failed"),
+        .applicationNotFound("Install macOS Tahoe"),
+    ]
+    rendered += assemblyErrors.map { $0.explanation.rendered() }
+
+    let commandErrors: [CommandError] = [
+        .launchFailed(executable: "/usr/bin/curl", reason: "no such file"),
+    ]
+    rendered += commandErrors.map { $0.explanation.rendered() }
+
     for text in rendered {
         let lowered = text.lowercased()
         for word in banned {
