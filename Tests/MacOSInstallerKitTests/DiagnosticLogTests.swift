@@ -75,3 +75,19 @@ func abbreviatesHomePath() {
 
     #expect(DiagnosticLog.displayPath(for: inside) == "~/Library/Logs/macos-installer/x.log")
 }
+
+@Test("leaves a sibling path alone when it only shares the home prefix's characters")
+func doesNotMangleSiblingPath() {
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    // A sibling directory whose name extends the home directory's name.
+    let sibling = URL(fileURLWithPath: home + "extra/foo.log")
+
+    #expect(DiagnosticLog.displayPath(for: sibling) == sibling.path)
+}
+
+@Test("abbreviates the home directory itself to a bare tilde")
+func abbreviatesHomeItself() {
+    let home = FileManager.default.homeDirectoryForCurrentUser
+
+    #expect(DiagnosticLog.displayPath(for: home) == "~")
+}

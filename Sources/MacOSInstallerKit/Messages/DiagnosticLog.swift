@@ -36,9 +36,16 @@ public struct DiagnosticLog {
     }
 
     /// Abbreviates a path under the user's home directory to `~/…` for display.
+    ///
+    /// The comparison is on a path-component boundary, not a raw character
+    /// prefix: with a home of `/Users/matt`, a sibling like
+    /// `/Users/matthew/foo` shares the prefix but is not inside it, and a
+    /// naive `hasPrefix` would render it as `~hew/foo` — a path the user
+    /// cannot act on, shown to them as the location of their log.
     public static func displayPath(for url: URL) -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        guard url.path.hasPrefix(home) else { return url.path }
+        if url.path == home { return "~" }
+        guard url.path.hasPrefix(home + "/") else { return url.path }
         return "~" + url.path.dropFirst(home.count)
     }
 
