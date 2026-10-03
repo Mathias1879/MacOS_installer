@@ -149,3 +149,111 @@ public struct InstallMediaWriter {
         return volume
     }
 }
+
+/// The first five cases are all raised before `createinstallmedia` runs, so
+/// they can truthfully say the drive was not touched. The last,
+/// `writeFailedDriveStateUnknown`, cannot make that claim: the erase may have
+/// started and been interrupted partway through, leaving the drive partially
+/// written and non-bootable. Its explanation must not say or imply that
+/// nothing happened, and must not suggest that a retry will fix it — the
+/// drive has to be erased and rewritten from scratch.
+extension MediaWriteError: Explainable {
+    public var explanation: UserFacingError {
+        switch self {
+        case .targetDisappeared(let uuid):
+            return UserFacingError(
+                title: "The drive disappeared",
+                whatHappened: "The drive you chose (\(uuid)) is no longer connected, so nothing was erased.",
+                whatItMeans: "It was probably unplugged, or it went to sleep.",
+                whatToDoNext: [
+                    "Plug the drive back in and wait for it to appear on your desktop",
+                    "Run this command again",
+                ]
+            )
+
+        case .targetMoved(let expected, let found):
+            return UserFacingError(
+                title: "The drive moved",
+                whatHappened: "The drive you confirmed was \(expected), but it is now \(found). "
+                    + "Nothing was erased.",
+                whatItMeans: "macOS renumbers drives when devices are plugged in or unplugged. "
+                    + "This tool stopped rather than risk erasing a different drive.",
+                whatToDoNext: [
+                    "Leave your drives connected as they are",
+                    "Run this command again and confirm the drive you want",
+                ]
+            )
+
+        case .targetNotMounted(let uuid):
+            return UserFacingError(
+                title: "The drive isn't ready",
+                whatHappened: "The drive you chose (\(uuid)) is connected but not mounted, "
+                    + "so nothing was erased.",
+                whatItMeans: "macOS can see the hardware but hasn't made the drive available yet.",
+                whatToDoNext: [
+                    "Unplug the drive, wait a few seconds, and plug it back in",
+                    "Wait until it appears on your desktop",
+                    "Run this command again",
+                ]
+            )
+
+        case .installerToolMissing(let path):
+            return UserFacingError(
+                title: "The installer app is incomplete",
+                whatHappened: "The tool macOS uses to write the drive wasn't found inside the installer "
+                    + "app. Nothing was erased.",
+                whatItMeans: "The installer app is damaged or only partly downloaded.",
+                whatToDoNext: [
+                    "Delete the installer app from your Applications folder",
+                    "Run this command again so it downloads a fresh copy",
+                    "If it keeps failing, the expected location was: \(path)",
+                ]
+            )
+
+        case .authenticationFailed:
+            return UserFacingError(
+                title: "The password wasn't accepted",
+                whatHappened: "macOS didn't accept the administrator password, so nothing was erased.",
+                whatItMeans: "Writing a drive needs administrator permission. "
+                    + "The prompt shows no characters at all as you type, which can make it feel broken.",
+                whatToDoNext: [
+                    "Run this command again",
+                    "Type your Mac login password when asked — you will see nothing appear, which is normal",
+                    "Press Return",
+                ]
+            )
+
+        case .writeFailedDriveStateUnknown:
+            return UserFacingError(
+                title: "The drive is in an unknown state",
+                whatHappened: "The erase began but did not finish before createinstallmedia stopped.",
+                whatItMeans: "The drive may be partially erased. It is not safe to boot from, and it is "
+                    + "not in the state it was in before you started — do not assume it is unchanged, "
+                    + "and do not retry in place.",
+                whatToDoNext: [
+                    "Do not use this drive to install macOS",
+                    "Do not retry — erase and rewrite it from scratch using Disk Utility "
+                        + "(it's in Applications, inside Utilities)",
+                    "Then run this command again",
+                ]
+            )
+        }
+    }
+
+    public var technicalDetail: String {
+        switch self {
+        case .targetDisappeared(let uuid):
+            return "MediaWriteError.targetDisappeared uuid=\(uuid)"
+        case .targetMoved(let expected, let found):
+            return "MediaWriteError.targetMoved expected=\(expected) found=\(found)"
+        case .targetNotMounted(let uuid):
+            return "MediaWriteError.targetNotMounted uuid=\(uuid)"
+        case .installerToolMissing(let path):
+            return "MediaWriteError.installerToolMissing path=\(path)"
+        case .authenticationFailed(let message):
+            return "MediaWriteError.authenticationFailed message=\(message)"
+        case .writeFailedDriveStateUnknown(let exitCode, let message):
+            return "MediaWriteError.writeFailedDriveStateUnknown exitCode=\(exitCode) message=\(message)"
+        }
+    }
+}

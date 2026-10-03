@@ -21,6 +21,48 @@ public enum InstallerPreparationError: Error, Equatable, Sendable {
     }
 }
 
+/// Both cases are raised from `prepare`'s initial `switch`, before any
+/// download or assembly step runs, so both can truthfully say the drive was
+/// not touched — and must say so explicitly, because by the time this runs
+/// the user has already confirmed the erase.
+extension InstallerPreparationError: Explainable {
+    public var explanation: UserFacingError {
+        switch self {
+        case .legacyAssemblyNotSupported:
+            return UserFacingError(
+                title: "This macOS version isn't supported yet",
+                whatHappened: "Mojave and Catalina media are not supported yet. The drive was not touched.",
+                whatItMeans: "This is a gap in what this tool can build, not a problem with your drive.",
+                whatToDoNext: [
+                    "See the project roadmap for current support status",
+                ]
+            )
+
+        case .softwareUpdateOnly(let version):
+            return UserFacingError(
+                title: "This release must be fetched separately",
+                whatHappened: "macOS \(version) cannot be downloaded directly by this tool. "
+                    + "The drive was not touched.",
+                whatItMeans: "Apple only distributes this release through softwareupdate's "
+                    + "full-installer fetch, not as a direct download.",
+                whatToDoNext: [
+                    "Run: softwareupdate --fetch-full-installer",
+                    "Run this command again once that finishes, to use the local copy",
+                ]
+            )
+        }
+    }
+
+    public var technicalDetail: String {
+        switch self {
+        case .legacyAssemblyNotSupported:
+            return "InstallerPreparationError.legacyAssemblyNotSupported"
+        case .softwareUpdateOnly(let version):
+            return "InstallerPreparationError.softwareUpdateOnly version=\(version)"
+        }
+    }
+}
+
 /// Orchestrates turning a selected `InstallerRelease` into a usable installer
 /// application: download the payload if one is needed, verify it against
 /// Apple's published digest when one is available, then assemble it.

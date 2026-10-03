@@ -39,6 +39,79 @@ public enum VolumeGuard {
         private static func gigabytes(_ bytes: Int64) -> String {
             String(format: "%.1f GB", Double(bytes) / 1_000_000_000)
         }
+
+        /// A three-part explanation alongside `userMessage`. `userMessage`
+        /// stays a single line for `VolumeTableFormatter`'s listing, which is
+        /// a table cell, not an error report; this is what prints when a
+        /// targeted `--volume` is refused outright.
+        public var explanation: UserFacingError {
+            switch self {
+            case .internalDisk:
+                return UserFacingError(
+                    title: "This is an internal disk",
+                    whatHappened: "Only external drives can be erased and used as installer media.",
+                    whatItMeans: "Erasing an internal disk risks destroying this Mac's own data or "
+                        + "its startup disk.",
+                    whatToDoNext: [
+                        "Connect an external USB drive",
+                        "Run this command again and choose that drive instead",
+                    ]
+                )
+
+            case .bootContainer:
+                return UserFacingError(
+                    title: "This volume is part of your startup disk",
+                    whatHappened: "This volume is part of the disk macOS is currently running from.",
+                    whatItMeans: "Erasing it would leave this Mac unable to start up.",
+                    whatToDoNext: [
+                        "Connect a different, external drive and choose that one instead",
+                    ]
+                )
+
+            case .notMounted:
+                return UserFacingError(
+                    title: "This volume isn't mounted",
+                    whatHappened: "This volume isn't mounted, so it can't be written to.",
+                    whatItMeans: "macOS can see the drive but hasn't made this volume available yet.",
+                    whatToDoNext: [
+                        "Unplug the drive, wait a few seconds, and plug it back in",
+                        "Run this command again",
+                    ]
+                )
+
+            case .wholeDisk:
+                return UserFacingError(
+                    title: "This is a whole disk, not a volume",
+                    whatHappened: "This is a whole disk rather than one of its volumes.",
+                    whatItMeans: "This tool erases a single volume, not an entire physical disk.",
+                    whatToDoNext: [
+                        "Pick one of this disk's volumes instead",
+                    ]
+                )
+
+            case .holdsProtectedPath(let path):
+                return UserFacingError(
+                    title: "This volume holds files this tool needs",
+                    whatHappened: "This volume holds files this operation needs (\(path)).",
+                    whatItMeans: "Erasing it would delete something this command is currently "
+                        + "reading from.",
+                    whatToDoNext: [
+                        "Choose a different drive",
+                    ]
+                )
+
+            case .tooSmall(let capacity, let required):
+                return UserFacingError(
+                    title: "This drive is too small",
+                    whatHappened: "This drive holds \(Self.gigabytes(capacity)), but "
+                        + "\(Self.gigabytes(required)) is needed.",
+                    whatItMeans: "The installer and its working space don't fit in the space available.",
+                    whatToDoNext: [
+                        "Use a larger drive with at least \(Self.gigabytes(required)) of free space",
+                    ]
+                )
+            }
+        }
     }
 
     public enum Verdict: Equatable, Sendable {

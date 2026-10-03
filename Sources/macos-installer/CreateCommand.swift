@@ -29,6 +29,20 @@ struct CreateCommand: AsyncParsableCommand {
     var yes = false
 
     func run() async throws {
+        do {
+            try await execute()
+        } catch let exitCode as ExitCode {
+            // Already handled: every site that throws ExitCode directly has
+            // already printed its own specific message.
+            throw exitCode
+        } catch {
+            let log = DiagnosticLog(directory: DiagnosticLog.defaultDirectory)
+            print(explain(error, log: log).rendered())
+            throw ExitCode.failure
+        }
+    }
+
+    private func execute() async throws {
         try PrivilegeCheck.assertNotRoot()
 
         let runner = RealCommandRunner()
@@ -168,32 +182,20 @@ struct CreateCommand: AsyncParsableCommand {
             assembler: InstallAssistantAssembler(runner: runner)
         )
 
-        do {
-            return try await preparer.prepare(release) { message in print("  \(message)") }
-        } catch {
-            // Caught broadly, not just `InstallerPreparationError`: a digest
-            // mismatch, a download failure, an assembly failure, or even a
-            // raw `CommandError` leaking out of a lower layer must all reach
-            // the user as a plain-language message that states the drive was
-            // not touched — this is the longer and likelier-to-fail path,
-            // and it runs AFTER the user has already confirmed an erase.
-            print("  \(PreparationErrorFormatter.render(error))")
-            throw ExitCode.failure
-        }
+        // Caught by the top-level `run()` catch, not here: a digest mismatch,
+        // a download failure, an assembly failure, or even a raw
+        // `CommandError` leaking out of a lower layer must all reach the user
+        // as a real message through `explain`, rendered once, in one place.
+        return try await preparer.prepare(release) { message in print("  \(message)") }
     }
 
     private func writeInstaller(app: URL, to target: Volume, uuid: String, runner: any CommandRunner) throws {
-        do {
-            try InstallMediaWriter(runner: runner).write(
-                installerApp: app,
-                toVolumeWithUUID: uuid,
-                expectedDeviceIdentifier: target.deviceIdentifier,
-                progress: { print("  \($0)") }
-            )
-        } catch let error as MediaWriteError {
-            print("  \(MediaWriteErrorFormatter.render(error))")
-            throw ExitCode.failure
-        }
+        try InstallMediaWriter(runner: runner).write(
+            installerApp: app,
+            toVolumeWithUUID: uuid,
+            expectedDeviceIdentifier: target.deviceIdentifier,
+            progress: { print("  \($0)") }
+        )
     }
 
     private func warn(_ message: String) {
