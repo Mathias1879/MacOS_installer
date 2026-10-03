@@ -54,8 +54,13 @@ func omitsAbsentMeaning() {
     #expect(out.contains("Couldn't reach Apple"))
     #expect(out.contains("The download couldn't start."))
     #expect(out.contains("1. Check your internet connection"))
-    // No empty section header, no stray blank run where the meaning would be.
-    #expect(out.contains("\n\n\n") == false)
+
+    // No blank-looking block where the meaning would have been. `indent("")`
+    // yields three spaces rather than an empty string, so a check for "\n\n\n"
+    // misses the real defect — assert that no line is whitespace-only instead.
+    let lines = out.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    let whitespaceOnly = lines.filter { !$0.isEmpty && $0.trimmingCharacters(in: .whitespaces).isEmpty }
+    #expect(whitespaceOnly.isEmpty, "rendered output contains whitespace-only line(s): \(whitespaceOnly)")
 }
 
 @Test("renders without a next-steps section when there is genuinely nothing to try")
