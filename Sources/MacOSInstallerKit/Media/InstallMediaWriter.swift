@@ -6,6 +6,14 @@ public enum MediaWriteError: Error, Equatable {
     case targetNotMounted(uuid: String)
     case installerToolMissing(path: String)
     case authenticationFailed(message: String)
+    /// `runner.run` itself threw before `createinstallmedia` ever started.
+    /// `RealCommandRunner.run` has exactly one throw site —
+    /// `CommandError.launchFailed`, wrapped around `Process.run()`
+    /// (`CommandRunner.swift`) — and that throw happens before the child
+    /// process exists. No process means nothing executed, so this case can
+    /// truthfully say the drive was not touched; it must not be folded into
+    /// `writeFailedDriveStateUnknown`.
+    case writeToolDidNotLaunch(message: String)
     /// `createinstallmedia` exited non-zero. The drive's state cannot be known
     /// from this alone: the erase may have started and been interrupted
     /// partway through. Callers MUST treat the target as a non-bootable,
@@ -115,12 +123,14 @@ public struct InstallMediaWriter {
         do {
             result = try runner.run(Self.sudoPath, arguments)
         } catch {
-            // A launch failure here is just as unable to prove the drive is
-            // untouched as a non-zero exit, so it funnels into the same
-            // "unknown state" case rather than leaking CommandError in a
-            // foreign error domain.
-            throw MediaWriteError.writeFailedDriveStateUnknown(
-                exitCode: -1,
+            // A launch failure here means createinstallmedia never started.
+            // RealCommandRunner.run has exactly one throw site —
+            // CommandError.launchFailed, wrapped around Process.run() itself
+            // — and it fires before any child process exists. That is
+            // structural certainty that nothing was written, not an
+            // inference, so this is a distinct, strictly safer case than a
+            // non-zero exit and must not share its wording.
+            throw MediaWriteError.writeToolDidNotLaunch(
                 message: "createinstallmedia did not launch: \(error)"
             )
         }
@@ -150,13 +160,16 @@ public struct InstallMediaWriter {
     }
 }
 
-/// The first five cases are all raised before `createinstallmedia` runs, so
-/// they can truthfully say the drive was not touched. The last,
-/// `writeFailedDriveStateUnknown`, cannot make that claim: the erase may have
-/// started and been interrupted partway through, leaving the drive partially
-/// written and non-bootable. Its explanation must not say or imply that
-/// nothing happened, and must not suggest that a retry will fix it — the
-/// drive has to be erased and rewritten from scratch.
+/// The first six cases — including `writeToolDidNotLaunch`, raised when
+/// `runner.run` throws before `createinstallmedia` ever starts — are all
+/// raised before the tool writes anything, so they can truthfully say the
+/// drive was not touched. The last, `writeFailedDriveStateUnknown`, cannot
+/// make that claim: it is only reachable once `createinstallmedia` has
+/// actually launched and then exited non-zero, so the erase may have started
+/// and been interrupted partway through, leaving the drive partially written
+/// and non-bootable. Its explanation must not say or imply that nothing
+/// happened, and must not suggest that a retry will fix it — the drive has to
+/// be erased and rewritten from scratch.
 extension MediaWriteError: Explainable {
     public var explanation: UserFacingError {
         switch self {
@@ -223,6 +236,18 @@ extension MediaWriteError: Explainable {
                 ]
             )
 
+        case .writeToolDidNotLaunch(let message):
+            return UserFacingError(
+                title: "The installer tool couldn't be started",
+                whatHappened: "createinstallmedia did not start running, so nothing was erased: \(message).",
+                whatItMeans: "macOS was unable to launch the tool that writes the drive. This failure "
+                    + "happens before any writing can begin, so the drive is exactly as it was.",
+                whatToDoNext: [
+                    "Run this command again",
+                    "If it keeps failing, confirm sudo and createinstallmedia are available on this Mac",
+                ]
+            )
+
         case .writeFailedDriveStateUnknown:
             return UserFacingError(
                 title: "The drive is in an unknown state",
@@ -252,6 +277,8 @@ extension MediaWriteError: Explainable {
             return "MediaWriteError.installerToolMissing path=\(path)"
         case .authenticationFailed(let message):
             return "MediaWriteError.authenticationFailed message=\(message)"
+        case .writeToolDidNotLaunch(let message):
+            return "MediaWriteError.writeToolDidNotLaunch message=\(message)"
         case .writeFailedDriveStateUnknown(let exitCode, let message):
             return "MediaWriteError.writeFailedDriveStateUnknown exitCode=\(exitCode) message=\(message)"
         }

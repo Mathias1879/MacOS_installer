@@ -13,6 +13,7 @@ private let untouchedCases: [MediaWriteError] = [
     .targetNotMounted(uuid: "UUID-1"),
     .installerToolMissing(path: "/Applications/Install macOS Tahoe.app/Contents/Resources/createinstallmedia"),
     .authenticationFailed(message: "Sorry, try again."),
+    .writeToolDidNotLaunch(message: "createinstallmedia did not launch: no such file"),
 ]
 
 // MARK: - Ported from MediaWriteErrorFormatterTests
@@ -114,6 +115,7 @@ func technicalDetailNamesEveryCase() {
     #expect(MediaWriteError.targetNotMounted(uuid: "UUID-1").technicalDetail.contains("UUID-1"))
     #expect(MediaWriteError.installerToolMissing(path: "/x").technicalDetail.contains("/x"))
     #expect(MediaWriteError.authenticationFailed(message: "nope").technicalDetail.contains("nope"))
+    #expect(MediaWriteError.writeToolDidNotLaunch(message: "nope").technicalDetail.contains("nope"))
 }
 
 @Test("the unknown-state error carries the exit code in its technical detail, not its message")

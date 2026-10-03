@@ -6,6 +6,7 @@ import Foundation
 final class FakeCommandRunner: CommandRunner, @unchecked Sendable {
     private let lock = NSLock()
     private var stubs: [String: CommandResult] = [:]
+    private var throwErrors: [String: Error] = [:]
     private(set) var invocations: [(executable: String, arguments: [String])] = []
 
     /// Stub by the full command line, e.g. "/usr/sbin/softwareupdate --list-full-installers".
@@ -21,10 +22,22 @@ final class FakeCommandRunner: CommandRunner, @unchecked Sendable {
         )
     }
 
+    /// Makes `run` throw `error` for this exact command line, instead of
+    /// returning a stubbed result — standing in for a command that never
+    /// launched at all (e.g. `Process.run()` itself failing), as opposed to
+    /// one that launched and exited non-zero.
+    func throwError(_ error: Error, for commandLine: String) {
+        lock.lock(); defer { lock.unlock() }
+        throwErrors[commandLine] = error
+    }
+
     func run(_ executable: String, _ arguments: [String]) throws -> CommandResult {
         lock.lock(); defer { lock.unlock() }
         invocations.append((executable, arguments))
         let key = ([executable] + arguments).joined(separator: " ")
+        if let error = throwErrors[key] {
+            throw error
+        }
         return stubs[key] ?? CommandResult(
             exitCode: 127,
             standardOutput: "",

@@ -327,3 +327,42 @@ func reportsWriteFailureUsingStdoutWhenStderrEmpty() {
         )
     }
 }
+
+/// The counterpart to `reportsWriteFailure`: there, createinstallmedia
+/// launches and exits non-zero. Here, it never launches at all — the runner
+/// itself throws, the way a missing `sudo` or `createinstallmedia` binary
+/// would. This must surface as `writeToolDidNotLaunch`, not
+/// `writeFailedDriveStateUnknown`, and its explanation must say the drive was
+/// not touched, since nothing ever ran.
+@Test("reports that the installer tool did not launch, and the drive was not touched, when the runner throws")
+func reportsWriteToolDidNotLaunch() {
+    let runner = FakeCommandRunner()
+    stubSuccessfulAuthentication(on: runner)
+    runner.stub(standardOutput: infoPlist(id: "disk5s1", mount: "/Volumes/SanDisk Ultra"),
+                for: "\(diskutilPath) info -plist \(targetUUID)")
+    runner.throwError(
+        CommandError.launchFailed(executable: sudoPath, reason: "no such file"),
+        for: "\(sudoPath) \(createInstallMedia) --volume /Volumes/SanDisk Ultra --nointeraction"
+    )
+
+    do {
+        try InstallMediaWriter(runner: runner).write(
+            installerApp: app, toVolumeWithUUID: targetUUID,
+            expectedDeviceIdentifier: "disk5s1", progress: { _ in }
+        )
+        Issue.record("expected write(installerApp:) to throw")
+    } catch let error as MediaWriteError {
+        guard case .writeToolDidNotLaunch = error else {
+            Issue.record("expected .writeToolDidNotLaunch, got \(error)")
+            return
+        }
+        let rendered = error.explanation.rendered().lowercased()
+        #expect(
+            rendered.contains("not")
+                && (rendered.contains("erased") || rendered.contains("written") || rendered.contains("touched")),
+            "explanation must state the drive was not touched: \(rendered)"
+        )
+    } catch {
+        Issue.record("expected a MediaWriteError, but \(error) leaked out instead")
+    }
+}

@@ -15,6 +15,39 @@ public enum BootVolumeResolverError: Error, Equatable {
     case cannotIdentifyBootVolume(String)
 }
 
+/// This is a deliberate refusal, not a bug: the tool stopped ON PURPOSE
+/// because it could not confirm, with certainty, which APFS container the
+/// running system booted from. Offering a volume list without that
+/// confirmation risks showing the startup disk itself as an erasable target —
+/// so it refuses to proceed rather than guess. The explanation must say it
+/// stopped on purpose to protect the startup disk, not hand back the generic
+/// "this is a gap in the tool" fallback.
+extension BootVolumeResolverError: Explainable {
+    public var explanation: UserFacingError {
+        switch self {
+        case .cannotIdentifyBootVolume:
+            return UserFacingError(
+                title: "Couldn't confirm your startup disk",
+                whatHappened: "This tool could not confirm which disk macOS is currently running from.",
+                whatItMeans: "It stopped on purpose, to protect your startup disk: without that "
+                    + "confirmation, it cannot guarantee the startup disk is excluded from the drives "
+                    + "offered for erasure.",
+                whatToDoNext: [
+                    "Run this command again",
+                    "If it keeps failing, open an issue and attach the log file below",
+                ]
+            )
+        }
+    }
+
+    public var technicalDetail: String {
+        switch self {
+        case .cannotIdentifyBootVolume(let detail):
+            return "BootVolumeResolverError.cannotIdentifyBootVolume detail=\(detail)"
+        }
+    }
+}
+
 /// Determines which APFS container the running system booted from.
 ///
 /// This exists as its own type because the obvious implementation is wrong.
