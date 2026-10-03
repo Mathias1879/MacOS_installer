@@ -144,3 +144,34 @@ never reached even though it would satisfy the request.
 **`"%.1f GB"` is duplicated** in `VolumeGuard` and `VolumeTableFormatter`.
 
 **Time Machine detection is near-dead code.** Modern Time Machine volumes are rarely *named* "time machine", so the name-matching rule almost certainly never fires in practice. Do not count that warning as a shipped control until it keys on `APFSVolumeRole == "Backup"`.
+
+## Carried from Plan 3, Task 4 (structured user-facing errors)
+
+**`RefusalReason.userMessage` and `.explanation` are hand-copied prose that can drift.**
+`VolumeGuard` now carries both a one-line table-cell string and a three-part explanation for each
+refusal. Verified consistent today, and nothing couples them — `refusalReasonsHaveMessages` and
+`refusalReasonsOfferNextSteps` each test their own property in isolation. Deliberately NOT coupled:
+making a table cell and a three-part report share a source risks wording that suits neither. Revisit
+only if they actually diverge.
+
+**`DigestError.mismatch` and `DownloadError.sizeMismatch` assert the bad file "has been deleted"
+while the deletion is best-effort `try?`** (`InstallerPreparer.swift:135,152`). Wording inherited
+verbatim from the deleted `PreparationErrorFormatter`, not introduced by Plan 3. The honest fix
+threads the deletion outcome into the case signature, churning the enum and its tests for a low-harm
+case: if deletion fails, the next run simply fails again with the same clear message. Fix if the
+enum is being reshaped anyway.
+
+**`DiskEnumeratorError.listFailed` reaches `explain()`'s generic fallback.** Deliberate — `diskutil
+list` failing outright IS unexpected, so "a gap in the tool" is honest for it. Listed so a future
+reviewer does not read it as an oversight alongside the three refusal types that WERE conformed.
+
+**`MediaWriteError.explanation` (~80 lines) and `RefusalReason.explanation` (~67) exceed the 50-line
+function guideline.** Accepted exception: one switch per type with verbose per-case literals.
+Splitting would hurt readability. Recorded so the final review does not re-raise it.
+
+**Two error-message surfaces now exist per type and only one is exhaustiveness-guarded by default.**
+The `exhaustivelyCheck*` helper pattern (an exhaustive `switch` with no `default`, called from the
+test so the compiler checks it) is the project's answer to hand-maintained sample arrays silently
+shipping gaps. It was proven necessary empirically: a new enum case with a dishonest explanation
+passed a green suite before the helpers existed. ANY new test that samples enum cases by hand must
+carry one.
