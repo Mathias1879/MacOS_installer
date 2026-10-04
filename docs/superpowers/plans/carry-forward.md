@@ -175,3 +175,33 @@ test so the compiler checks it) is the project's answer to hand-maintained sampl
 shipping gaps. It was proven necessary empirically: a new enum case with a dishonest explanation
 passed a green suite before the helpers existed. ANY new test that samples enum cases by hand must
 carry one.
+
+## Carried from Plan 3, Tasks 5-6 (walkthrough content)
+
+**Warning about sleep is the weaker half of the fix — the tool could prevent it.** The guidance now
+tells the user to keep the drive plugged in and the Mac awake for the whole 30-60 minute unattended
+window, because the erase happens at the END of it. Wrapping the long operation in `caffeinate`
+would remove the failure mode instead of describing it. New behaviour and a new process invocation,
+so it was out of scope for a wording fix.
+
+**`TargetMacPicker`'s help is unbounded.** Asking "?" does not consume an attempt, by design, so a
+non-interactive caller piping "?" endlessly never terminates (it does exit on EOF). Unreachable
+interactively — a human typing "?" forever is making a choice. A separate generous help cap would
+close it if it ever matters.
+
+**The test target now depends on the `macos-installer` executable target** (`Package.swift`), so
+`TargetMacPicker`'s retry/help loop can be tested via `@testable import macos_installer`. Internal
+only. The alternative — moving the picker into the library — would put bare `print(...)` calls inside
+`MacOSInstallerKit`, because the injected closure is NAMED `print` and shadows the global, which
+would make the project's no-print grep guard unreliable. Keep the picker in the executable.
+
+**A plan's sample code carries the plan author's factual errors with the authority of a spec.**
+Task 5 spent THREE fix rounds on facts that were wrong in the plan, not in the implementation: an
+assertion that all three boot methods differ (two Intel generations share one), a year-based T2
+heuristic (no model year predicts T2 status), and "Controller" written as the only System Information
+label (Apple's own article says "either Controller or iBridge, depending on the version of macOS").
+Task 6 added two more: a "2018 and later" T2 claim, and an assertion that the target Mac needs
+internet to install (Apple's article says nothing of the kind and the whole point is an offline
+installer). For Plan 4: fact-check the plan's own user-facing strings against primary sources BEFORE
+dispatch, and check them against earlier tasks' findings too — external verification does not catch
+internal contradiction.
