@@ -19,25 +19,17 @@ public enum TargetMac: String, CaseIterable, Sendable {
         }
     }
 
-    /// One sentence naming the physical action. Deliberately different per
-    /// target: a reader should never have to work out which half applies.
+    /// One sentence naming the physical action. Apple silicon's procedure
+    /// differs from Intel's; the two Intel targets share the identical
+    /// procedure, because holding Option during startup is physically the
+    /// same action on both. The T2 target's extra Startup Security Utility
+    /// requirement is a separate fact, not a wording difference — see
+    /// `requiresStartupSecurityUtility`, which is its single home.
     public var bootMethod: String {
         switch self {
         case .appleSilicon:
-            // Deliberately avoids the word "option" even as a substring (e.g.
-            // "options") — that word is reserved for the Intel boot method
-            // below, where it names a physical key, and the two must never
-            // read alike.
-            return "Press and hold the power button until you see a list of startup disks."
-        case .intelT2:
-            // Text must stay distinct from the pre-T2 case below: this Mac
-            // also needs Startup Security Utility changed before external
-            // media is even offered as a choice (see
-            // `requiresStartupSecurityUtility`), which is worth saying here
-            // even though the key you hold is the same.
-            return "Turn the Mac on and immediately hold the Option key until you see the startup drives. " +
-                "This Mac also needs Startup Security Utility set to allow booting from external media first."
-        case .intelPreT2:
+            return "Press and hold the power button until you see a list of startup options."
+        case .intelT2, .intelPreT2:
             return "Turn the Mac on and immediately hold the Option key until you see the startup drives."
         }
     }

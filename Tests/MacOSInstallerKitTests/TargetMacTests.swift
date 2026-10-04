@@ -1,27 +1,35 @@
 import Testing
 @testable import MacOSInstallerKit
 
-@Test("every target has a label, a boot method, and no shared boot method")
-func targetsHaveDistinctBootMethods() {
+@Test("every target has a label and a boot method")
+func targetsHaveLabelsAndBootMethods() {
     TargetMac.allCases.forEach(exhaustivelyCheckTargetMac)
-
-    let methods = TargetMac.allCases.map(\.bootMethod)
 
     for target in TargetMac.allCases {
         #expect(target.label.isEmpty == false)
         #expect(target.bootMethod.isEmpty == false)
     }
-    // Apple silicon holds the power button; Intel holds Option. If two targets
-    // shared a method the picker would be pointless.
-    #expect(Set(methods).count == TargetMac.allCases.count)
+
+    // Apple silicon's procedure (power button) differs from both Intel
+    // targets' (Option key).
+    #expect(TargetMac.appleSilicon.bootMethod != TargetMac.intelT2.bootMethod)
+    #expect(TargetMac.appleSilicon.bootMethod != TargetMac.intelPreT2.bootMethod)
+
+    // Asserted POSITIVELY, not just "not different": an Intel T2 Mac and an
+    // Intel pre-T2 Mac boot external media by the identical physical
+    // procedure — turn it on, hold Option. If a future edit diverges these
+    // strings, this must fail. The T2-only difference (Startup Security
+    // Utility must be changed first) belongs solely to
+    // `requiresStartupSecurityUtility`, not to this prose.
+    #expect(TargetMac.intelT2.bootMethod == TargetMac.intelPreT2.bootMethod)
 }
 
-@Test("Apple silicon boots by holding the power button, not Option")
+@Test("Apple silicon boots by holding the power button, not the Option key")
 func appleSiliconUsesPowerButton() {
     let method = TargetMac.appleSilicon.bootMethod.lowercased()
 
     #expect(method.contains("power button"))
-    #expect(method.contains("option") == false)
+    #expect(method.contains("option key") == false)
 }
 
 @Test("both Intel targets boot by holding Option")
