@@ -289,3 +289,37 @@ case.
 |  |  |  |  |  |
 |  |  |  |  |  |
 |  |  |  |  |  |
+
+### 14. Cross-version write — the project's central claim
+
+This is the differentiator the tool exists for, and NOTHING in the automated suite can
+reach it: the download, assembly and write path is faked end to end in tests.
+
+Apple's own instructions for creating a bootable installer state: "In most cases, you
+must download from a Mac that is compatible with the macOS you're downloading." This
+tool deliberately bypasses that gate by fetching `InstallAssistant.pkg` straight from
+Apple's CDN via the software update catalog, instead of asking `softwareupdate`, which
+refuses incompatible versions. Whether the bypass actually produces working media has
+never been tested.
+
+Two things can fail independently, and both must be checked:
+
+- [ ] **Does `installer -pkg InstallAssistant.pkg -target /` succeed on an INCOMPATIBLE
+      host?** Run `create` on a modern Mac for a macOS release that host cannot itself
+      run (e.g. Big Sur from a current Apple silicon Mac). The package may carry a
+      volume check or distribution requirement that refuses outright.
+      Result: ______________________
+- [ ] **If it installs, does that installer app's `createinstallmedia` RUN on the newer
+      host?** An older installer's binary may be refused or may fail against a newer
+      system. Capture the exact error if it does.
+      Result: ______________________
+- [ ] **Does the resulting stick actually boot the OLDER target Mac?** This is the only
+      result that settles the claim.
+      Result: ______________________
+
+If any of the three fails, the README's cross-version claim and the spec's "own
+implementation, not a wrapper" justification both need rewriting — that reasoning rests
+entirely on this working.
+
+Host used: ______________________  macOS written: ______________________
+Target Mac: ______________________  Date: ______________________
