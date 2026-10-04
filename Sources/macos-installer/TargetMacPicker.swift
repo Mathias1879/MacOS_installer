@@ -19,7 +19,8 @@ enum TargetMacPicker {
         print("    ?. I'm not sure — help me find out")
         print("")
 
-        for _ in 0..<maximumAttempts {
+        var attempts = 0
+        while attempts < maximumAttempts {
             print("  Type 1, 2, 3, or ? : ")
             guard let answer = readLine() else { return nil }
 
@@ -33,6 +34,7 @@ enum TargetMacPicker {
             if let target = TargetMac.identify(answer: answer) {
                 return target
             }
+            attempts += 1
             print("  That didn't match one of the options. Type 1, 2, 3, or ? for help.")
         }
 

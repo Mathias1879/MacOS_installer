@@ -14,8 +14,8 @@ public enum TargetMac: String, CaseIterable, Sendable {
     public var label: String {
         switch self {
         case .appleSilicon: return "A Mac with Apple silicon (M1, M2, M3, M4…)"
-        case .intelT2: return "An Intel Mac from 2018 or later"
-        case .intelPreT2: return "An Intel Mac from 2017 or earlier"
+        case .intelT2: return "An Intel Mac with a T2 security chip"
+        case .intelPreT2: return "An Intel Mac without a T2 security chip"
         }
     }
 
@@ -34,8 +34,8 @@ public enum TargetMac: String, CaseIterable, Sendable {
         }
     }
 
-    /// 2018-and-later Intel Macs refuse to boot from external media until
-    /// Startup Security Utility is changed.
+    /// T2 Macs ship with Secure Boot set to Full Security, which refuses to
+    /// boot from external media until Startup Security Utility is changed.
     public var requiresStartupSecurityUtility: Bool {
         self == .intelT2
     }
@@ -43,18 +43,25 @@ public enum TargetMac: String, CaseIterable, Sendable {
     public static let helpText = """
     How to find out which Mac you have:
 
-      1. On the Mac you want to install macOS onto, click the Apple menu
-         in the top-left corner of the screen
+    If the Mac you want to install macOS onto can start up:
+
+      1. Click the Apple menu in the top-left corner of the screen
       2. Click "About This Mac"
-      3. Look for "Chip" or "Processor"
+      3. If "Chip" shows Apple M1, M2, M3 or M4, choose option 1
+      4. If it shows an Intel processor instead, click "More Info…," then
+         "System Report," and look under Hardware for "Controller." If
+         Controller lists "Apple T2 Security Chip," choose option 2.
+         If there is no such line, choose option 3.
 
-    If it says Apple M1, M2, M3 or M4, choose option 1.
-    If it says Intel and the Mac is from 2018 or later, choose option 2.
-    If it says Intel and the Mac is from 2017 or earlier, choose option 3.
+    If that Mac cannot start up at all, Apple publishes the full list of T2
+    models in a support article titled
+    "Mac computers that have the Apple T2 Security Chip."
+    Look it up from another device and check whether your model is on it.
 
-    If that Mac won't turn on at all, the year is usually printed in the
-    About This Mac window of any Mac it was set up from, or on the original
-    receipt or box.
+    If you still cannot tell, choose option 2. The extra step it adds is
+    harmless on a Mac that doesn't need it — but skipping that step on a
+    Mac that does need it means no startup drive will appear at all when
+    you try to boot from this installer.
     """
 
     /// Resolves a typed answer, or nil when it cannot be resolved confidently.
@@ -73,16 +80,21 @@ public enum TargetMac: String, CaseIterable, Sendable {
         default: break
         }
 
-        if cleaned.contains("apple silicon") || cleaned.range(of: #"^m[1-4]$"#, options: .regularExpression) != nil {
+        if cleaned.contains("apple silicon") || cleaned.range(of: #"\bm[1-4]\b"#, options: .regularExpression) != nil {
             return .appleSilicon
         }
         // "intel" alone is ambiguous — which era? — so it is not accepted.
-        if cleaned.contains("t2") || cleaned.contains("2018") || cleaned.contains("2019") || cleaned.contains("2020") {
+        //
+        // No model year ever maps here. A model year cannot tell a T2 Mac
+        // from a pre-T2 Mac: the iMac Pro (late 2017) was Apple's first T2
+        // Mac, while the 2019 iMac has none at all (the iMac did not gain T2
+        // until the 2020 27-inch model) — yet 2019 IS a T2 year for the Mac
+        // Pro, the MacBook Pro 16-inch, and the MacBook Air. One year maps to
+        // both answers depending on the family, so there is no safe range to
+        // match here; `helpText` sends the user to the Controller line in
+        // System Report, or to Apple's model list, instead.
+        if cleaned.contains("t2") {
             return .intelT2
-        }
-        if cleaned.contains("2017") || cleaned.contains("2016") || cleaned.contains("2015")
-            || cleaned.contains("2014") || cleaned.contains("2013") || cleaned.contains("2012") {
-            return .intelPreT2
         }
 
         return nil

@@ -66,6 +66,26 @@ func identifyAcceptsWords() {
     #expect(TargetMac.identify(answer: "  Intel  ") == nil)  // ambiguous: which Intel?
 }
 
+@Test("identify accepts the chip names exactly as helpText tells the user to read them")
+func identifyAcceptsRealisticChipAnswers() {
+    // These are the literal strings `helpText` points a user at (the "Chip"
+    // line in About This Mac), so the parser must not reject its own advice.
+    #expect(TargetMac.identify(answer: "Apple M1 chip") == .appleSilicon)
+    #expect(TargetMac.identify(answer: "M2 Max") == .appleSilicon)
+    #expect(TargetMac.identify(answer: "M3 Pro") == .appleSilicon)
+    #expect(TargetMac.identify(answer: "Apple M4") == .appleSilicon)
+}
+
+@Test("unanchoring the chip match does not create a false positive on unrelated text")
+func identifyDoesNotFalsePositiveOnEmbeddedLetterM() {
+    // Unanchoring `^m[1-4]$` to a substring match risks firing on any word
+    // that happens to contain "m" followed by a digit 1-4, such as "item1"
+    // or "problem2". A word-boundary match must reject these.
+    #expect(TargetMac.identify(answer: "item1") == nil)
+    #expect(TargetMac.identify(answer: "problem2") == nil)
+    #expect(TargetMac.identify(answer: "room3") == nil)
+}
+
 @Test("identify rejects an answer it cannot resolve rather than guessing")
 func identifyRejectsUnknown() {
     // Guessing here would send the user the wrong boot instructions and they
@@ -73,6 +93,16 @@ func identifyRejectsUnknown() {
     #expect(TargetMac.identify(answer: "") == nil)
     #expect(TargetMac.identify(answer: "a macbook") == nil)
     #expect(TargetMac.identify(answer: "4") == nil)
+}
+
+@Test("identify never resolves a bare model year — one year can mean either T2 era")
+func identifyRejectsBareYears() {
+    // The iMac Pro (late 2017) was Apple's first T2 Mac; the 2019 iMac has no
+    // T2 chip at all; 2019 IS a T2 year for the Mac Pro, MacBook Pro 16-inch,
+    // and MacBook Air. No bare year can be mapped safely, so none is.
+    for year in ["2012", "2017", "2018", "2019", "2020"] {
+        #expect(TargetMac.identify(answer: year) == nil)
+    }
 }
 
 @Test("help text explains how to find out, without jargon")
@@ -85,6 +115,26 @@ func helpTextIsUsable() {
     // Copy rules: no blaming language.
     for banned in ["simply", "just ", "obviously"] {
         #expect(help.lowercased().contains(banned) == false)
+    }
+}
+
+@Test("help text resolves the Mac-won't-start-up case and never a bare year")
+func helpTextCoversAllThreeCasesWithoutInventingAYearRuleOrURL() {
+    let help = TargetMac.helpText
+
+    // Startable-Mac path: names the binary, no-exceptions signal.
+    #expect(help.contains("Controller"))
+    #expect(help.contains("Apple T2 Security Chip"))
+    // Won't-start-up path: refers to Apple's article by title, never a URL —
+    // no URL has been verified, and a wrong link in help text is worse than
+    // none.
+    #expect(help.contains("Mac computers that have the Apple T2 Security Chip"))
+    #expect(help.contains("http") == false)
+    // Still-unsure path: fails toward the safer guess (T2), with a reason.
+    #expect(help.contains("option 2"))
+    // No bare year is used as a classification rule anywhere in the prose.
+    for year in ["2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019", "2020"] {
+        #expect(help.contains(year) == false)
     }
 }
 
