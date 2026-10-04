@@ -28,16 +28,24 @@ public struct GuidanceSection: Equatable, Sendable {
 /// that the after-stage contains only the selected target's instructions), and
 /// editable without reading the command.
 public enum GuidanceCatalog {
+    /// - Parameter originalDriveName: The name the user's drive had BEFORE
+    ///   this tool touched it (what they'd see on their desktop right now,
+    ///   e.g. "SanDisk Ultra"). This is used only for `.during`, where the
+    ///   user is still looking for their own drive. `.after` ignores it: once
+    ///   `createinstallmedia` finishes, the drive is always renamed to
+    ///   "Install \(installerName)", so `.after` derives that name itself
+    ///   rather than accepting it as a parameter — a caller cannot pass the
+    ///   wrong name for a value it is never asked for.
     public static func sections(
         for stage: GuidanceStage,
         target: TargetMac,
         installerName: String,
-        driveName: String?
+        originalDriveName: String?
     ) -> [GuidanceSection] {
         switch stage {
         case .before: return before(installerName: installerName)
-        case .during: return during(driveName: driveName)
-        case .after: return after(target: target, installerName: installerName, driveName: driveName)
+        case .during: return during(driveName: originalDriveName)
+        case .after: return after(target: target, installerName: installerName)
         }
     }
 
@@ -58,10 +66,11 @@ public enum GuidanceCatalog {
                 heading: "Two things to know",
                 body: [
                     "Everything on that USB drive will be erased. There is no undo.",
-                    "This takes roughly 30 to 60 minutes, most of it downloading. "
-                        + "You can leave it running.",
-                    "The Mac you install onto will need to be connected to the internet, "
-                        + "because the installer downloads a few things specific to that model.",
+                    "This takes roughly 30 to 60 minutes, most of it downloading.",
+                    "Keep the drive plugged in and this Mac awake the whole time — "
+                        + "unplugging it or letting the Mac sleep partway through can ruin the drive.",
+                    "The installer itself is already on the drive and is not downloaded again — "
+                        + "though some Macs will still ask you to connect to Wi-Fi during setup afterward.",
                 ]
             ),
         ]
@@ -93,10 +102,11 @@ public enum GuidanceCatalog {
 
     private static func after(
         target: TargetMac,
-        installerName: String,
-        driveName: String?
+        installerName: String
     ) -> [GuidanceSection] {
-        let volume = driveName ?? "Install \(installerName)"
+        // createinstallmedia always renames the finished volume to this, no
+        // matter what it was called before — so this is derived, never passed in.
+        let volume = "Install \(installerName)"
         let securitySection = target.requiresStartupSecurityUtility ? [startupSecuritySection()] : []
 
         return [readySection(volume: volume), bootSection(target: target, volume: volume)]
@@ -151,6 +161,7 @@ public enum GuidanceCatalog {
             steps: [
                 "If the drive doesn't appear, hold Command-R at startup instead",
                 "From the menu bar choose Utilities, then Startup Security Utility",
+                "If asked to unlock it, select a user and enter that Mac's administrator password",
                 "Set \"Allow booting from external or removable media\"",
                 "Restart and hold Option again",
             ]
