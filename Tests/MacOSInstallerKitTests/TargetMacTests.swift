@@ -128,7 +128,7 @@ func helpTextCoversAllThreeCasesWithoutInventingAYearRuleOrURL() {
     // Won't-start-up path: refers to Apple's article by title, never a URL —
     // no URL has been verified, and a wrong link in help text is worse than
     // none.
-    #expect(help.contains("Mac computers that have the Apple T2 Security Chip"))
+    #expect(help.contains("Mac computers with the Apple T2 Security Chip"))
     #expect(help.contains("http") == false)
     // Still-unsure path: fails toward the safer guess (T2), with a reason.
     #expect(help.contains("option 2"))
@@ -136,6 +136,18 @@ func helpTextCoversAllThreeCasesWithoutInventingAYearRuleOrURL() {
     for year in ["2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019", "2020"] {
         #expect(help.contains(year) == false)
     }
+}
+
+@Test("help text names both chip labels, since the T2 line reads Controller or iBridge depending on macOS")
+func helpTextNamesBothT2Labels() {
+    let help = TargetMac.helpText
+
+    // Apple's own article hedges this exact way: "select either Controller
+    // or iBridge, depending on the version of macOS in use." Naming only one
+    // label misroutes a genuine T2 Mac straight to "no T2 chip" on whichever
+    // macOS version uses the other label.
+    #expect(help.contains("Controller"))
+    #expect(help.contains("iBridge"))
 }
 
 // MARK: - Exhaustiveness guard

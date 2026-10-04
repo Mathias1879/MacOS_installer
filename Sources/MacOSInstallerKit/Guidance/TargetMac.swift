@@ -48,14 +48,16 @@ public enum TargetMac: String, CaseIterable, Sendable {
       1. Click the Apple menu in the top-left corner of the screen
       2. Click "About This Mac"
       3. If "Chip" shows Apple M1, M2, M3 or M4, choose option 1
-      4. If it shows an Intel processor instead, click "More Info…," then
-         "System Report," and look under Hardware for "Controller." If
-         Controller lists "Apple T2 Security Chip," choose option 2.
-         If there is no such line, choose option 3.
+      4. If it shows an Intel processor instead, click "System Report"
+         (on macOS Ventura or later, click "More Info…" first), then look
+         under Hardware for "Controller" — or "iBridge" on some older
+         versions of macOS. If either line lists "Apple T2 Security Chip,"
+         choose option 2. Only choose option 3 if you checked both labels
+         and neither lists it.
 
     If that Mac cannot start up at all, Apple publishes the full list of T2
     models in a support article titled
-    "Mac computers that have the Apple T2 Security Chip."
+    "Mac computers with the Apple T2 Security Chip."
     Look it up from another device and check whether your model is on it.
 
     If you still cannot tell, choose option 2. The extra step it adds is

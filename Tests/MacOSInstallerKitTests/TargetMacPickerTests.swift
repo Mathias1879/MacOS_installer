@@ -25,10 +25,19 @@ func helpDoesNotConsumeAttempts() {
 func unresolvedAnswersStillConsumeAttempts() {
     // Three unresolved answers against a budget of 3 must exhaust it and
     // return nil — this is the budget Finding 3 says help must NOT spend.
-    var inputs = ["nope", "huh", "what"]
+    //
+    // A fourth answer ("1") is appended that WOULD resolve to a real target
+    // if it were ever read. With the attempts budget working, give-up
+    // happens after the third unresolved answer and this fourth answer is
+    // never reached, so the result must still be nil. If `attempts += 1`
+    // were ever deleted again, the loop would keep going, read this fourth
+    // answer, and return `.appleSilicon` instead — failing this test.
+    var inputs = ["nope", "huh", "what", "1"]
+    var readCount = 0
     let target = TargetMacPicker.ask(
         readLine: {
             guard !inputs.isEmpty else { return nil }
+            readCount += 1
             return inputs.removeFirst()
         },
         print: { _ in },
@@ -36,6 +45,7 @@ func unresolvedAnswersStillConsumeAttempts() {
     )
 
     #expect(target == nil)
+    #expect(readCount == 3)
 }
 
 @Test("the picker still resolves a correct first answer")
