@@ -236,12 +236,19 @@ extension MediaWriteError: Explainable {
                 ]
             )
 
-        case .writeToolDidNotLaunch(let message):
+        // No `message` binding on purpose. The payload is a raw Swift error
+        // description, and interpolating it here printed enum syntax like
+        // `launchFailed(executable:…)` to the user. It belongs in
+        // `technicalDetail` and the log, the same way `authenticationFailed`
+        // above keeps its payload out of the user's view.
+        case .writeToolDidNotLaunch:
             return UserFacingError(
                 title: "The installer tool couldn't be started",
-                whatHappened: "createinstallmedia did not start running, so nothing was erased: \(message).",
-                whatItMeans: "macOS was unable to launch the tool that writes the drive. This failure "
-                    + "happens before any writing can begin, so the drive is exactly as it was.",
+                whatHappened: "macOS could not start createinstallmedia, the tool that writes the drive, "
+                    + "so nothing was erased.",
+                whatItMeans: "Either that tool or the sudo command it runs through is missing or "
+                    + "unusable on this Mac. This failure happens before any writing can begin, so "
+                    + "the drive is exactly as it was.",
                 whatToDoNext: [
                     "Run this command again",
                     "If it keeps failing, confirm sudo and createinstallmedia are available on this Mac",

@@ -8,13 +8,13 @@ import Testing
 /// here, where the actual wording of every explanation this task produces
 /// lives, and where a careless rewording really can reintroduce it.
 ///
-/// The sample arrays below are hand-maintained and have no exhaustiveness
-/// checking on their own — fix round 2 proved that pattern ships gaps
-/// silently, the same way `PreparationChainTotalityTests` once did. The
-/// `exhaustivelyCheck...` helpers further down are what actually enforce it:
-/// each is an exhaustive `switch` with no `default` clause, so adding a case
-/// to any sampled type fails this file at compile time until a sample is
-/// added above and the switch is updated to match.
+/// The sample arrays in `renderedExplanationSamples()` are hand-maintained and
+/// have no exhaustiveness checking on their own — fix round 2 proved that
+/// pattern ships gaps silently, the same way `PreparationChainTotalityTests`
+/// once did. The `exhaustivelyCheck...` helpers further down are what actually
+/// enforce it: each is an exhaustive `switch` with no `default` clause, so
+/// adding a case to any sampled type fails this file at compile time until a
+/// sample is added to the helper and the switch is updated to match.
 ///
 /// "simply", "just", "obviously" and "merely" all tell a confused reader the
 /// problem is them, which is exactly the failure mode this project's
@@ -23,6 +23,57 @@ import Testing
 func explanationsDoNotBlameTheReader() {
     let banned = ["simply", "just ", "obviously", "merely"]
 
+    for text in renderedExplanationSamples() {
+        let lowered = text.lowercased()
+        for word in banned {
+            #expect(lowered.contains(word) == false, "explanation contains banned word '\(word)': \(text)")
+        }
+    }
+}
+
+/// This guard exists because the leak it catches has now shipped twice.
+///
+/// 1. `explain(_:log:)` used `String(describing:)` on any non-`Explainable`
+///    error, so a `DigestError.mismatch` printed `mismatch(expected: …)` to
+///    someone who had just confirmed erasing a drive. Documented as fixed in
+///    `Explainable.swift:17-20`.
+/// 2. `MediaWriteError.writeToolDidNotLaunch` interpolated its raw `message`
+///    payload into `whatHappened`, so a missing `sudo` printed
+///    `launchFailed(executable: "/usr/bin/sudo", reason: …)`. Fixed in fix
+///    round 4 of Task 4.
+///
+/// Neither was caught by the wording tests that existed at the time, because
+/// every one of them asserted only the PRESENCE of required words. This
+/// asserts the ABSENCE of raw Swift value-construction syntax: an identifier
+/// immediately followed by `(` and a labelled argument. Legitimate prose
+/// always puts a space or an opening bracket before a parenthesis, so the
+/// "identifier directly abutting `(`" shape is what makes this specific to
+/// code rather than to English.
+@Test("no error explanation leaks raw Swift value syntax into user-facing text")
+func explanationsDoNotLeakRawSwiftSyntax() throws {
+    // identifier + "(" + argumentLabel + ":" — e.g. `launchFailed(executable:`,
+    // `mismatch(expected:`, `sizeMismatch(expected:`, `String(describing:`.
+    let rawValueSyntax = try NSRegularExpression(
+        pattern: "[A-Za-z_][A-Za-z0-9_]*\\([A-Za-z_][A-Za-z0-9_]*:"
+    )
+
+    for text in renderedExplanationSamples() {
+        let match = rawValueSyntax.firstMatch(
+            in: text, range: NSRange(text.startIndex..., in: text)
+        )
+        let leaked = match.flatMap { Range($0.range, in: text) }.map { String(text[$0]) }
+
+        #expect(
+            leaked == nil,
+            "explanation leaks raw Swift syntax '\(leaked ?? "")' into user-facing text: \(text)"
+        )
+    }
+}
+
+/// Every sampled `Explainable` case, rendered exactly as the terminal would
+/// show it. Shared by every wording guard in this file so that a new case is
+/// covered by all of them at once.
+private func renderedExplanationSamples() -> [String] {
     var rendered: [String] = []
 
     let writeErrors: [MediaWriteError] = [
@@ -30,8 +81,18 @@ func explanationsDoNotBlameTheReader() {
         .targetMoved(expected: "disk5s1", found: "disk7s1"),
         .targetNotMounted(uuid: "U"),
         .installerToolMissing(path: "/x"),
-        .authenticationFailed(message: "nope"),
-        .writeToolDidNotLaunch(message: "nope"),
+        // These two payloads are the ones their throw sites really build: a
+        // raw Swift error description, interpolated. A toy string like "nope"
+        // would let an interpolation leak slip past the raw-syntax guard
+        // below, which is exactly how the round-4 defect shipped.
+        .authenticationFailed(
+            message: "sudo could not be run: "
+                + "\(CommandError.launchFailed(executable: "/usr/bin/sudo", reason: "no such file"))"
+        ),
+        .writeToolDidNotLaunch(
+            message: "createinstallmedia did not launch: "
+                + "\(CommandError.launchFailed(executable: "/usr/bin/sudo", reason: "no such file"))"
+        ),
         .writeFailedDriveStateUnknown(exitCode: 1, message: "nope"),
     ]
     writeErrors.forEach(exhaustivelyCheckMediaWriteError)
@@ -98,23 +159,19 @@ func explanationsDoNotBlameTheReader() {
     diskutilParseErrors.forEach(exhaustivelyCheckDiskutilParseError)
     rendered += diskutilParseErrors.map { $0.explanation.rendered() }
 
-    for text in rendered {
-        let lowered = text.lowercased()
-        for word in banned {
-            #expect(lowered.contains(word) == false, "explanation contains banned word '\(word)': \(text)")
-        }
-    }
+    return rendered
 }
 
 // MARK: - Exhaustiveness guards
 //
 // Each helper is an exhaustive `switch` over its type with no `default`
 // clause and every case just `break`ing. None is called for what it does —
-// each is only called, in the test above, so the compiler both checks it
-// against the current case set and doesn't flag it as dead code. Adding a
-// case to any of these types without updating the matching switch below (and
-// adding a sample to the corresponding array above) fails this file to
-// compile, rather than letting a new case ship with no banned-word coverage.
+// each is only called, in `renderedExplanationSamples()` above, so the
+// compiler both checks it against the current case set and doesn't flag it as
+// dead code. Adding a case to any of these types without updating the
+// matching switch below (and adding a sample to the corresponding array
+// above) fails this file to compile, rather than letting a new case ship with
+// no wording coverage.
 
 private func exhaustivelyCheckMediaWriteError(_ error: MediaWriteError) {
     switch error {
