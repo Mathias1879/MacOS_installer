@@ -28,11 +28,16 @@ public struct InstructionExporter {
     /// `GuidanceCatalog.sections(for:target:installerName:originalDriveName:)`.
     @discardableResult
     public func export(target: TargetMac, installerName: String) throws -> URL {
+        // Sanitised ONCE here, then used everywhere `installerName` would
+        // otherwise reach the document — including the volume name
+        // `GuidanceCatalog.after` builds from it — so the raw, untrusted
+        // string never reaches rendered output by any path.
+        let safeInstallerName = Self.sanitised(installerName)
         let sections = GuidanceCatalog.sections(
-            for: .after, target: target, installerName: installerName, originalDriveName: nil
+            for: .after, target: target, installerName: safeInstallerName, originalDriveName: nil
         )
-        let text = Self.render(installerName: installerName, sections: sections)
-        let url = directory.appendingPathComponent(Self.fileName(for: installerName))
+        let text = Self.render(installerName: safeInstallerName, target: target, sections: sections)
+        let url = directory.appendingPathComponent(Self.fileName(for: safeInstallerName, target: target))
 
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -44,15 +49,30 @@ public struct InstructionExporter {
         return url
     }
 
-    private static func fileName(for installerName: String) -> String {
-        "How to use your \(sanitised(installerName)) installer.md"
+    /// Includes `target` so exporting for a second Mac from the same download
+    /// cannot silently overwrite the first Mac's file — only re-running for
+    /// the SAME installer AND the SAME target should overwrite. `target.rawValue`
+    /// is filename-safe on its own (it is a Swift identifier: no slashes, no
+    /// control characters), so it needs no sanitising. `safeInstallerName` is
+    /// already sanitised by the caller (`export`), once, for every use.
+    private static func fileName(for safeInstallerName: String, target: TargetMac) -> String {
+        "How to use your \(safeInstallerName) installer (\(target.rawValue)).md"
     }
 
     /// Builds the Markdown body by mapping each section to its own block of
     /// lines and flattening, rather than mutating a shared accumulator — no
-    /// section needs to know about any other section's output.
-    private static func render(installerName: String, sections: [GuidanceSection]) -> String {
-        let header = ["# How to use your \(installerName) installer", ""]
+    /// section needs to know about any other section's output. The target is
+    /// stated in words right after the title — `target.label` is its one home
+    /// (see `TargetMac.label`) — so a reader holding this file cannot mistake
+    /// which Mac it was written for before they start following boot steps.
+    /// `safeInstallerName` is already sanitised by the caller (`export`).
+    private static func render(installerName safeInstallerName: String, target: TargetMac, sections: [GuidanceSection]) -> String {
+        let header = [
+            "# How to use your `\(safeInstallerName)` installer",
+            "",
+            "This file is for: \(target.label)",
+            "",
+        ]
         let body = sections.flatMap(renderedLines)
         return (header + body).joined(separator: "\n")
     }
@@ -65,15 +85,38 @@ public struct InstructionExporter {
         return heading + paragraphs + steps + trailer
     }
 
-    /// Strips path separators so an installer name can never escape the
-    /// target directory, and falls back to a fixed name rather than ever
-    /// producing an empty string — an empty component would either be
-    /// rejected by the filesystem or collapse into the directory itself.
+    /// The single sanitiser shared by the filename AND the document body —
+    /// `installerName` is untrusted (it comes from Apple's software update
+    /// catalog title), and treating it differently in the two places it is
+    /// rendered is how Finding 1 happened. One fact, one home, one sanitiser.
+    ///
+    /// - Normalises Unicode first (`.precomposedStringWithCanonicalMapping`),
+    ///   so two byte-different spellings of the same visible name (NFC vs
+    ///   NFD) collapse to the same sanitised string and therefore the same
+    ///   file, rather than silently producing two files for one installer.
+    /// - Strips every control character, including newlines, so the name can
+    ///   never inject a second line — and therefore never a second Markdown
+    ///   heading — into either the filename or the document body.
+    /// - Also strips the characters that make Markdown syntax "live"
+    ///   (`! [ ] ( ) \` # * _ < >`). Stripping newlines alone still leaves an
+    ///   image tag or heading marker active on the single remaining line, so
+    ///   this is what actually prevents `![x](url)` from reaching the
+    ///   document as a working image tag rather than inert text.
+    /// - Replaces "/" with "-" and removes ".." so the name can never be
+    ///   mistaken for a path component that escapes the target directory.
+    /// - Falls back to a fixed, non-empty name — "macOS", not "installer" —
+    ///   so a whitespace-only input reads as "your macOS installer" rather
+    ///   than the doubled-up "your installer installer".
     private static func sanitised(_ name: String) -> String {
-        let stripped = name
+        let normalised = name.precomposedStringWithCanonicalMapping
+        let unsafeCharacters = CharacterSet.newlines
+            .union(.controlCharacters)
+            .union(CharacterSet(charactersIn: "![]()`#*_<>"))
+        let withoutUnsafeCharacters = String(normalised.unicodeScalars.filter { !unsafeCharacters.contains($0) })
+        let stripped = withoutUnsafeCharacters
             .replacingOccurrences(of: "/", with: "-")
             .replacingOccurrences(of: "..", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return stripped.isEmpty ? "installer" : stripped
+            .trimmingCharacters(in: .whitespaces)
+        return stripped.isEmpty ? "macOS" : stripped
     }
 }
