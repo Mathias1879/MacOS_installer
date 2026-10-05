@@ -140,6 +140,24 @@ func sanitisesFileName() throws {
     #expect(text.contains("# How to use your macOS/../../Tahoe installer"))
 }
 
+/// True when `target` appears in `text` without an immediately preceding
+/// `\`. Fix round 3 narrows the escaped set to six characters and
+/// deliberately stops escaping `#`, relying instead on the structural fact
+/// that a heading only forms at the START of a line — so the injection
+/// tests below check for an unescaped BRACKET (which would mean a real
+/// link/image could form) rather than for the literal substring the name
+/// contained, which may now survive mid-line as inert text.
+private func hasUnescapedCharacter(_ target: Character, in text: String) -> Bool {
+    var previousWasBackslash = false
+    for character in text {
+        if character == target, !previousWasBackslash {
+            return true
+        }
+        previousWasBackslash = character == "\\"
+    }
+    return false
+}
+
 @Test("a newline plus a Markdown image tag in the installer name cannot inject a heading or a live image into the document")
 func sanitisesDocumentBodyAgainstMarkdownInjection() throws {
     let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
@@ -148,16 +166,21 @@ func sanitisesDocumentBodyAgainstMarkdownInjection() throws {
     let url = try InstructionExporter(directory: dir).export(target: .appleSilicon, installerName: malicious)
     let text = try String(contentsOf: url, encoding: .utf8)
 
-    // No second heading was introduced: the attack's own "##" marker is gone,
-    // so this exact injected heading line can never appear.
-    #expect(text.contains("## Injected heading") == false)
-    // No live (or inert-but-present) image/link syntax reached the document.
-    #expect(text.contains("![") == false)
-    #expect(text.contains("](") == false)
-    // Only the genuine section headings exist — count stays fixed regardless
-    // of what the attacker's name contains.
+    // No second heading LINE was introduced. The attacker's newline was
+    // stripped before rendering, so its "##" marker can only land mid-line —
+    // never at the start of a physical line, which is the only place
+    // CommonMark treats "#" as heading syntax. Every line starting with "#"
+    // is still either this document's own title or a genuine "## " section
+    // heading.
     let headingLines = text.split(separator: "\n").filter { $0.hasPrefix("#") }
     #expect(headingLines.allSatisfy { $0.hasPrefix("# How to use your") || $0.hasPrefix("## ") })
+
+    // No live image/link syntax reached the document: every "[" and "]" that
+    // came from the attacker's name is backslash-escaped, so CommonMark can
+    // never pair them into `[text](url)` or `![alt](url)` — regardless of
+    // the unescaped "(" and ")" sitting next to them.
+    #expect(hasUnescapedCharacter("[", in: text) == false)
+    #expect(hasUnescapedCharacter("]", in: text) == false)
 }
 
 @Test("reverting the sanitiser on the document body makes the injection test above fail")
@@ -165,47 +188,29 @@ func mutationProofForFinding1() throws {
     let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
     let malicious = "macOS Tahoe\n## Injected heading\n![tracker](https://evil.example.com/pixel.png)"
 
-    // Reproduce the UNSANITISED heading this project's round-1 code used to
-    // write, to prove `sanitisesDocumentBodyAgainstMarkdownInjection` above
-    // is a real guard rather than one that always passes.
+    // Reproduce the UNSANITISED header this project's round-1 code used to
+    // write — it kept the attacker's newlines, so "##" actually lands at the
+    // start of its own line, which is what makes it a real CommonMark
+    // heading rather than three inert words of body text.
     let unsanitisedHeader = "# How to use your \(malicious) installer"
-    #expect(unsanitisedHeader.contains("## Injected heading"))
+    let unsanitisedHeadingLines = unsanitisedHeader.split(separator: "\n").filter { $0.hasPrefix("#") }
+    #expect(unsanitisedHeadingLines.contains("## Injected heading"))
     #expect(unsanitisedHeader.contains("![tracker]"))
 
-    // And the fixed exporter does not reproduce either symptom.
+    // The fixed exporter strips the newlines before this text is ever built,
+    // so the same raw ingredients land mid-line instead of at a line start,
+    // and the brackets are escaped so no live link/image syntax can form.
     let url = try InstructionExporter(directory: dir).export(target: .appleSilicon, installerName: malicious)
     let text = try String(contentsOf: url, encoding: .utf8)
-    #expect(text.contains("## Injected heading") == false)
+    let headingLines = text.split(separator: "\n").filter { $0.hasPrefix("#") }
+    #expect(headingLines.allSatisfy { $0.hasPrefix("# How to use your") || $0.hasPrefix("## ") })
     #expect(text.contains("![tracker]") == false)
 }
 
-/// Strips the backslash `InstructionExporter.markdownEscaped` inserts before
-/// a Markdown metacharacter, so a test can compare the rendered document
-/// against the plain name it was given, independent of whichever
-/// Markdown-safety mechanism the exporter uses internally. This is NOT a
-/// general Markdown parser — it just undoes the one escaping convention this
-/// codebase uses (`\` immediately before the escaped character), which is
-/// exactly what a test pinning fidelity of THIS exporter's output needs.
-private func unescapedMarkdown(_ text: String) -> String {
-    var result = ""
-    var previousWasBackslash = false
-    for character in text {
-        if previousWasBackslash {
-            result.append(character)
-            previousWasBackslash = false
-        } else if character == "\\" {
-            previousWasBackslash = true
-        } else {
-            result.append(character)
-        }
-    }
-    return result
-}
-
-@Test("a name containing Markdown grouping and emphasis characters appears in the document with those characters intact")
+@Test("a name containing Markdown grouping and emphasis characters appears in the document with those characters intact, and unescaped")
 func documentPreservesMarkdownPunctuationInName() throws {
     let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
-    // Covers all four characters fix round 2's brief calls out by name:
+    // Covers all four characters fix round 2's brief called out by name:
     // "(", ")", "*", "_". Not a value Apple ships; chosen to exercise all
     // four in one fixture. `macOS 15 (Beta)` below is the realistic one.
     let name = "macOS 15 (Beta)_2*"
@@ -214,21 +219,19 @@ func documentPreservesMarkdownPunctuationInName() throws {
     let text = try String(contentsOf: url, encoding: .utf8)
 
     // Round 1 DELETED these characters from the document. Round 2
-    // backslash-escapes them instead, which preserves them visually and in
-    // the raw file — read back as text, the real character is still there,
-    // just preceded by a backslash the reader (or a renderer) treats as
-    // nothing.
-    #expect(text.contains("("))
-    #expect(text.contains(")"))
-    #expect(text.contains("_"))
-    #expect(text.contains("*"))
+    // backslash-escaped them. Round 3 narrows the escaped set further still:
+    // none of these four is in it, so they now reach the document completely
+    // unchanged — no backslash anywhere near them.
+    #expect(text.contains("(Beta)_2*"))
+    #expect(text.contains("\\(Beta)_2*") == false)
 }
 
-@Test("the document's stated volume name equals \"Install \" plus the installer name, with punctuation preserved — the assertion that would have caught the parentheses defect")
+@Test("the document's stated volume name matches the real drive name exactly, with NO backslashes at all — what a plain-text reader (e.g. TextEdit) actually sees")
 func volumeNameMatchesRealDriveName() throws {
     let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
-    // The realistic fixture named in fix round 2's brief: Apple does ship
-    // parenthesised beta titles, so this is reachable, not theoretical.
+    // The realistic fixture named in fix round 2's (and still round 3's)
+    // brief: Apple does ship parenthesised beta titles, so this is
+    // reachable, not theoretical.
     let name = "macOS 15 (Beta)"
 
     let url = try InstructionExporter(directory: dir).export(target: .intelT2, installerName: name)
@@ -236,11 +239,33 @@ func volumeNameMatchesRealDriveName() throws {
 
     // createinstallmedia renames the real drive to "Install <name>" using
     // the raw name (minus newlines/control characters, which can never
-    // survive onto a real volume name either). The document must claim that
-    // EXACT string — not a stripped one — or the user hunts the startup
-    // picker for a name that was never on the drive.
+    // survive onto a real volume name either). A `.md` file double-clicked
+    // on macOS is at least as likely to open in TextEdit as plain text as it
+    // is to open in a Markdown previewer — so the document must contain this
+    // EXACT string, with NO backslashes, or a plain-text reader goes hunting
+    // the startup picker for a drive name that has backslashes the real
+    // drive never had. This is the stronger property round 3 exists for:
+    // round 2's escaping would have failed this very assertion.
     let expectedVolumeName = "Install \(name)"
-    #expect(unescapedMarkdown(text).contains("\"\(expectedVolumeName)\""))
+    #expect(text.contains("\"\(expectedVolumeName)\""))
+    #expect(text.contains("\\") == false)
+}
+
+@Test("a name containing link/image/HTML metacharacters IS escaped, so narrowing the set does not quietly become escaping nothing")
+func documentEscapesBracketsAndAngleBrackets() throws {
+    let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+    let name = "macOS [Tahoe] <beta>"
+
+    let url = try InstructionExporter(directory: dir).export(target: .intelT2, installerName: name)
+    let text = try String(contentsOf: url, encoding: .utf8)
+
+    #expect(text.contains("\\[Tahoe\\]"))
+    #expect(text.contains("\\<beta\\>"))
+    // And the unescaped forms are gone from the document.
+    #expect(hasUnescapedCharacter("[", in: text) == false)
+    #expect(hasUnescapedCharacter("]", in: text) == false)
+    #expect(hasUnescapedCharacter("<", in: text) == false)
+    #expect(hasUnescapedCharacter(">", in: text) == false)
 }
 
 @Test("NFC and NFD spellings of the same installer name normalise to one file")

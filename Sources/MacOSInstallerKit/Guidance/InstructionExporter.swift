@@ -132,29 +132,56 @@ public struct InstructionExporter {
     /// is the slow part)" in another stage) is never touched by this pass,
     /// because it was never built from `interpolatedContent`.
     ///
-    /// Escaping is strictly better than fix round 1's deletion: `\(` still
-    /// renders as `(` and still reads as `(` in the raw file, so a human
-    /// comparing this document's claimed volume name against the real
-    /// drive's name sees the same characters either way (see
-    /// `escapedForMarkdown`'s test, `volumeNameMatchesRealDriveName`).
+    /// Escaping only the narrow six-character set (fix round 3) is strictly
+    /// better than fix round 1's deletion AND fix round 2's wider twelve-
+    /// character set: a realistic name like "macOS 15 (Beta)" contains none
+    /// of the six, so it reaches both a Markdown previewer and a plain-text
+    /// reader (e.g. TextEdit) with the EXACT same characters the real,
+    /// renamed drive has — no backslashes to misread as part of the name
+    /// (see `escapedForMarkdown`'s test, `volumeNameMatchesRealDriveName`).
     private static func escapedForMarkdown(_ text: String, interpolatedContent: String) -> String {
         guard !interpolatedContent.isEmpty else { return text }
         return text.replacingOccurrences(of: interpolatedContent, with: markdownEscaped(interpolatedContent))
     }
 
-    /// Prefixes every Markdown metacharacter — including a literal backslash,
-    /// so this function's own escaping backslashes can never combine with a
-    /// character already in `text` to form an unintended escape — with `\`.
-    /// Same character set fix round 1 used to STRIP for the filename
-    /// (`! [ ] ( ) \` # * _ < >`): those are exactly the characters that make
-    /// Markdown syntax "live" (headings, emphasis, code spans, links,
-    /// images, autolinks/HTML). A code-span wrapper (backtick-delimited) was
-    /// considered for the heading instead, but a backtick IN the name could
-    /// close that span early; backslash-escaping has no such edge case,
-    /// because CommonMark honours `\` + punctuation as a literal character
-    /// in ordinary text, backtick included.
+    /// Prefixes only the six characters that can actually alter document
+    /// structure or inject content — with `\` — rather than the full set of
+    /// twelve Markdown metacharacters fix round 2 escaped. Fix round 2's
+    /// wider set fixed how the file renders in a Markdown previewer but
+    /// broke how it reads as plain text (e.g. a `.md` file double-clicked
+    /// and opened in TextEdit, which is at least as likely a destination):
+    /// a volume name that exists to be matched character-for-character
+    /// against the Mac's startup picker must never gain backslashes the
+    /// real drive doesn't have.
+    ///
+    /// The six kept are exactly the ones that can inject on their own:
+    /// - `\` must be escaped so it cannot manufacture escapes out of
+    ///   whatever follows it.
+    /// - `` ` `` could open a code span and swallow following text.
+    /// - `[` and `]` together are what a link or image needs — CommonMark
+    ///   cannot form `[text](url)` or `![alt](url)` without both brackets
+    ///   present, so escaping either one kills the pair, which is also why
+    ///   `!` needs no escaping of its own anymore.
+    /// - `<` and `>` are needed for raw HTML such as `<img src=…>`.
+    ///
+    /// Dropped from fix round 2's set, and why each is safe to drop:
+    /// - `(` and `)` are inert literal text once `[` and `]` are gone —
+    ///   there is no bracket pair left for them to close a link against.
+    /// - `#` only opens a heading at the START of a line. The installer
+    ///   name is interpolated mid-line in every template this exporter
+    ///   renders (see `GuidanceCatalog`'s `.after`-stage sections and this
+    ///   file's own header line) and newlines were already stripped from
+    ///   the name before this function ever sees it (`layerAgnosticallyCleaned`),
+    ///   so an embedded `#` can never land at the start of a physical line.
+    /// - `*` and `_` can at worst italicise — cosmetic, not structural.
+    ///
+    /// None of these six appears in any real macOS release title (e.g.
+    /// "macOS 15 (Beta)"), so a realistic name now passes through this
+    /// function completely unchanged — no conditional logic required. Only
+    /// an adversarial name picks up backslashes, which is exactly where
+    /// that cosmetic cost belongs.
     private static func markdownEscaped(_ text: String) -> String {
-        let metacharacters: Set<Character> = ["\\", "`", "*", "_", "[", "]", "(", ")", "#", "!", "<", ">"]
+        let metacharacters: Set<Character> = ["\\", "`", "[", "]", "<", ">"]
         var escaped = ""
         escaped.reserveCapacity(text.count)
         for character in text {
