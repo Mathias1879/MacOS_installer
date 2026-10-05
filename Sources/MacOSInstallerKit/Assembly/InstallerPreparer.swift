@@ -109,6 +109,14 @@ public struct InstallerPreparer {
         }
     }
 
+    /// A digest mismatch is retried exactly once — the download itself is
+    /// deleted and re-fetched from scratch — before giving up. A checksum
+    /// failure that recurs on a fresh download is not a transient blip (that
+    /// case is already handled inside `Downloader`'s own attempt loop); it
+    /// means the catalog's published digest itself is wrong, and looping
+    /// forever would just hide that behind an endless retry.
+    private static let maximumDigestAttempts = 2
+
     private func downloadAndAssemble(
         release: InstallerRelease,
         from url: URL,
@@ -117,6 +125,36 @@ public struct InstallerPreparer {
         try fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
         let pkg = cacheDirectory.appendingPathComponent("InstallAssistant-\(release.build).pkg")
 
+        try await downloadAndVerify(release: release, from: url, to: pkg, progress: progress)
+
+        progress("Installing the macOS installer app (this needs your password)…")
+        return try assembler.assemble(payloadAt: pkg, expectedAppName: "Install \(release.name)")
+    }
+
+    private func downloadAndVerify(
+        release: InstallerRelease,
+        from url: URL,
+        to pkg: URL,
+        progress: @Sendable @escaping (String) -> Void
+    ) async throws {
+        for attempt in 1...Self.maximumDigestAttempts {
+            do {
+                try await performDownload(release: release, from: url, to: pkg, progress: progress)
+                try verifyDigestIfPresent(of: release, at: pkg, progress: progress)
+                return
+            } catch let error as DigestError {
+                if attempt == Self.maximumDigestAttempts { throw error }
+                progress("The download didn't match Apple's published digest — downloading it again…")
+            }
+        }
+    }
+
+    private func performDownload(
+        release: InstallerRelease,
+        from url: URL,
+        to pkg: URL,
+        progress: @Sendable @escaping (String) -> Void
+    ) async throws {
         do {
             try await downloader.download(from: url, to: pkg, expectedBytes: release.sizeBytes) { done, total in
                 let percent = total > 0 ? Int(done * 100 / total) : 0
@@ -136,25 +174,27 @@ public struct InstallerPreparer {
             }
             throw error
         }
+    }
 
-        if let digest = release.digest {
-            progress("Checking the download…")
-            do {
-                try DigestVerifier.verify(fileAt: pkg, matches: digest)
-            } catch {
-                // `Downloader` skips the transfer entirely once a file of the
-                // expected size exists on disk. Leaving a wrong-but-right-sized
-                // file in the cache would make every future run fail with the
-                // same digest mismatch, forever, with no visible cause — so
-                // delete it and let the next run fetch a fresh copy. The
-                // deletion itself is best-effort: if it fails, the original
-                // digest error is still the one that matters to the caller.
-                try? fileManager.removeItem(at: pkg)
-                throw error
-            }
+    private func verifyDigestIfPresent(
+        of release: InstallerRelease,
+        at pkg: URL,
+        progress: @Sendable @escaping (String) -> Void
+    ) throws {
+        guard let digest = release.digest else { return }
+        progress("Checking the download…")
+        do {
+            try DigestVerifier.verify(fileAt: pkg, matches: digest)
+        } catch {
+            // `Downloader` skips the transfer entirely once a file of the
+            // expected size exists on disk. Leaving a wrong-but-right-sized
+            // file in the cache would make every future run fail with the
+            // same digest mismatch, forever, with no visible cause — so
+            // delete it and let the next run fetch a fresh copy. The
+            // deletion itself is best-effort: if it fails, the original
+            // digest error is still the one that matters to the caller.
+            try? fileManager.removeItem(at: pkg)
+            throw error
         }
-
-        progress("Installing the macOS installer app (this needs your password)…")
-        return try assembler.assemble(payloadAt: pkg, expectedAppName: "Install \(release.name)")
     }
 }

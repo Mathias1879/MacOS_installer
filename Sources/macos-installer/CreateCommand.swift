@@ -303,7 +303,12 @@ struct CreateCommand: AsyncParsableCommand {
 
     private func prepareInstaller(for release: InstallerRelease, runner: any CommandRunner) async throws -> URL {
         let preparer = InstallerPreparer(
-            downloader: Downloader(transfer: CurlResumableTransfer(commandRunner: runner)),
+            downloader: Downloader(
+                transfer: CurlResumableTransfer(commandRunner: runner),
+                onRetry: { attempt, wait, error in
+                    print("  Transfer attempt \(attempt) failed (\(error)); retrying in \(wait)…")
+                }
+            ),
             assembler: InstallAssistantAssembler(runner: runner)
         )
 

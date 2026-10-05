@@ -202,6 +202,40 @@ func sizeMismatchDeletesTheStalePackage() async throws {
     #expect(FileManager.default.fileExists(atPath: expectedPkg.path) == false)
 }
 
+@Test("re-downloads once on a digest mismatch before giving up")
+func reDownloadsOnceOnDigestMismatch() async throws {
+    let cacheDir = try tempDir(); defer { try? FileManager.default.removeItem(at: cacheDir) }
+    // A transfer that yields corrupt bytes on every attempt: the digest
+    // check fails identically each time, so the preparer must make exactly
+    // two download attempts (the original plus one re-download) before
+    // giving up — never looping indefinitely.
+    let payloadBytes = Data("pkg-bytes".utf8)
+    let wrongDigest = String(repeating: "0", count: 40)
+
+    let transfer = FakeTransfer(payload: payloadBytes)
+    let assembler = FakeAssembler(outcome: .failure(StubAssemblerError.shouldNotHaveBeenCalled))
+    let preparer = InstallerPreparer(
+        downloader: Downloader(transfer: transfer),
+        assembler: assembler,
+        cacheDirectory: cacheDir
+    )
+
+    let url = URL(string: "https://swcdn.apple.com/x/InstallAssistant.pkg")!
+    await #expect(throws: (any Error).self) {
+        _ = try await preparer.prepare(
+            release(
+                payload: .installAssistant(url: url), sizeBytes: Int64(payloadBytes.count), digest: wrongDigest
+            )
+        ) { _ in }
+    }
+
+    // One original transfer plus one re-download, never more: the counter
+    // is `transfer.offsets.count`, i.e. how many times the fake's
+    // `transfer(from:to:startingAt:progress:)` was actually invoked.
+    #expect(transfer.offsets.count == 2)
+    #expect(assembler.invocations.isEmpty)
+}
+
 @Test("fails clearly, not with a crash, for a legacy ESD payload")
 func legacyESDFailsClearly() async throws {
     let transfer = FakeTransfer(payload: Data())
