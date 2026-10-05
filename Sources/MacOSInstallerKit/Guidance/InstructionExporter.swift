@@ -26,18 +26,33 @@ public struct InstructionExporter {
     /// the other Mac. `originalDriveName` is passed as `nil` because `.after`
     /// derives the post-rename volume name itself and never reads it; see
     /// `GuidanceCatalog.sections(for:target:installerName:originalDriveName:)`.
+    ///
+    /// Two DIFFERENT derived names exist from here on, because they answer
+    /// two different questions (fix round 2):
+    ///
+    /// - `cleanedInstallerName` strips ONLY newlines and control characters —
+    ///   the minimum every consumer needs, because an embedded newline could
+    ///   inject an extra line into either this file or Task 8's terminal
+    ///   output. Nothing else is touched, so it is what reaches
+    ///   `GuidanceCatalog` and, through it, the document's prose — meaning a
+    ///   real Apple title like "macOS 15 (Beta)" keeps its parentheses all
+    ///   the way to the sentence that tells the user what to look for at the
+    ///   startup picker. That sentence has to match the real, renamed drive,
+    ///   or the user hunts for a string that doesn't exist.
+    /// - The filename sanitiser (`sanitised(_:)`) is unchanged from fix round
+    ///   1 and is used ONLY for the filename, which has real filesystem
+    ///   constraints a Markdown document does not.
     @discardableResult
     public func export(target: TargetMac, installerName: String) throws -> URL {
-        // Sanitised ONCE here, then used everywhere `installerName` would
-        // otherwise reach the document — including the volume name
-        // `GuidanceCatalog.after` builds from it — so the raw, untrusted
-        // string never reaches rendered output by any path.
-        let safeInstallerName = Self.sanitised(installerName)
+        let cleanedInstallerName = Self.layerAgnosticallyCleaned(installerName)
         let sections = GuidanceCatalog.sections(
-            for: .after, target: target, installerName: safeInstallerName, originalDriveName: nil
+            for: .after, target: target, installerName: cleanedInstallerName, originalDriveName: nil
         )
-        let text = Self.render(installerName: safeInstallerName, target: target, sections: sections)
-        let url = directory.appendingPathComponent(Self.fileName(for: safeInstallerName, target: target))
+        let rawText = Self.render(installerName: cleanedInstallerName, target: target, sections: sections)
+        let text = Self.escapedForMarkdown(rawText, interpolatedContent: cleanedInstallerName)
+        let url = directory.appendingPathComponent(
+            Self.fileName(for: Self.sanitised(installerName), target: target)
+        )
 
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -53,10 +68,10 @@ public struct InstructionExporter {
     /// cannot silently overwrite the first Mac's file — only re-running for
     /// the SAME installer AND the SAME target should overwrite. `target.rawValue`
     /// is filename-safe on its own (it is a Swift identifier: no slashes, no
-    /// control characters), so it needs no sanitising. `safeInstallerName` is
-    /// already sanitised by the caller (`export`), once, for every use.
-    private static func fileName(for safeInstallerName: String, target: TargetMac) -> String {
-        "How to use your \(safeInstallerName) installer (\(target.rawValue)).md"
+    /// control characters), so it needs no sanitising. `fileNameSafeInstallerName`
+    /// is already sanitised by the caller (`export`'s `Self.sanitised(installerName)`).
+    private static func fileName(for fileNameSafeInstallerName: String, target: TargetMac) -> String {
+        "How to use your \(fileNameSafeInstallerName) installer (\(target.rawValue)).md"
     }
 
     /// Builds the Markdown body by mapping each section to its own block of
@@ -65,10 +80,17 @@ public struct InstructionExporter {
     /// stated in words right after the title — `target.label` is its one home
     /// (see `TargetMac.label`) — so a reader holding this file cannot mistake
     /// which Mac it was written for before they start following boot steps.
-    /// `safeInstallerName` is already sanitised by the caller (`export`).
-    private static func render(installerName safeInstallerName: String, target: TargetMac, sections: [GuidanceSection]) -> String {
+    ///
+    /// Returns the UNESCAPED text — `cleanedInstallerName` appears verbatim
+    /// here, exactly as `GuidanceCatalog` embedded it in `sections`. Markdown
+    /// escaping happens afterward, in `escapedForMarkdown`, as one pass over
+    /// the whole rendered document: every place this function or
+    /// `GuidanceCatalog` wrote `cleanedInstallerName` gets caught by that one
+    /// pass, with no risk of this function escaping it once and a catalog
+    /// sentence leaving another copy unescaped.
+    private static func render(installerName cleanedInstallerName: String, target: TargetMac, sections: [GuidanceSection]) -> String {
         let header = [
-            "# How to use your `\(safeInstallerName)` installer",
+            "# How to use your \(cleanedInstallerName) installer",
             "",
             "This file is for: \(target.label)",
             "",
@@ -85,23 +107,81 @@ public struct InstructionExporter {
         return heading + paragraphs + steps + trailer
     }
 
-    /// The single sanitiser shared by the filename AND the document body —
-    /// `installerName` is untrusted (it comes from Apple's software update
-    /// catalog title), and treating it differently in the two places it is
-    /// rendered is how Finding 1 happened. One fact, one home, one sanitiser.
+    /// Strips ONLY newlines and control characters. This is the ONE cleaning
+    /// step that belongs before `GuidanceCatalog`, because `GuidanceCatalog`'s
+    /// text has two consumers — this Markdown exporter and Task 8's terminal
+    /// walkthrough — and an embedded newline breaks both of them (it can
+    /// inject what reads as a second line, or a second Markdown heading, into
+    /// either). Nothing else is removed here: Markdown metacharacters like
+    /// `(` `)` `*` `_` are ordinary characters in a real Apple catalog title
+    /// (e.g. "macOS 15 (Beta)") and a terminal has no Markdown syntax for them
+    /// to corrupt, so stripping them at this shared layer would both lose
+    /// fidelity for Task 8 and still leave the Markdown-specific problem to
+    /// fix separately. That problem is `escapedForMarkdown`'s job instead.
+    private static func layerAgnosticallyCleaned(_ name: String) -> String {
+        let unsafeCharacters = CharacterSet.newlines.union(.controlCharacters)
+        return String(name.unicodeScalars.filter { !unsafeCharacters.contains($0) })
+    }
+
+    /// Backslash-escapes Markdown metacharacters wherever `interpolatedContent`
+    /// (the newline/control-stripped installer name) literally appears in
+    /// `text` — in the heading, and in every catalog sentence that embeds the
+    /// derived volume name ("Install \(name)"). A targeted substring replace,
+    /// rather than escaping the whole document, is what keeps this scoped to
+    /// untrusted content: `GuidanceCatalog`'s own literal prose (e.g. "(this
+    /// is the slow part)" in another stage) is never touched by this pass,
+    /// because it was never built from `interpolatedContent`.
+    ///
+    /// Escaping is strictly better than fix round 1's deletion: `\(` still
+    /// renders as `(` and still reads as `(` in the raw file, so a human
+    /// comparing this document's claimed volume name against the real
+    /// drive's name sees the same characters either way (see
+    /// `escapedForMarkdown`'s test, `volumeNameMatchesRealDriveName`).
+    private static func escapedForMarkdown(_ text: String, interpolatedContent: String) -> String {
+        guard !interpolatedContent.isEmpty else { return text }
+        return text.replacingOccurrences(of: interpolatedContent, with: markdownEscaped(interpolatedContent))
+    }
+
+    /// Prefixes every Markdown metacharacter — including a literal backslash,
+    /// so this function's own escaping backslashes can never combine with a
+    /// character already in `text` to form an unintended escape — with `\`.
+    /// Same character set fix round 1 used to STRIP for the filename
+    /// (`! [ ] ( ) \` # * _ < >`): those are exactly the characters that make
+    /// Markdown syntax "live" (headings, emphasis, code spans, links,
+    /// images, autolinks/HTML). A code-span wrapper (backtick-delimited) was
+    /// considered for the heading instead, but a backtick IN the name could
+    /// close that span early; backslash-escaping has no such edge case,
+    /// because CommonMark honours `\` + punctuation as a literal character
+    /// in ordinary text, backtick included.
+    private static func markdownEscaped(_ text: String) -> String {
+        let metacharacters: Set<Character> = ["\\", "`", "*", "_", "[", "]", "(", ")", "#", "!", "<", ">"]
+        var escaped = ""
+        escaped.reserveCapacity(text.count)
+        for character in text {
+            if metacharacters.contains(character) {
+                escaped.append("\\")
+            }
+            escaped.append(character)
+        }
+        return escaped
+    }
+
+    /// The filename sanitiser — UNCHANGED from fix round 1 (per fix round
+    /// 2's brief: "Filename sanitising stays exactly as it is"). Used ONLY
+    /// for the filename now; the document body no longer goes through this.
     ///
     /// - Normalises Unicode first (`.precomposedStringWithCanonicalMapping`),
     ///   so two byte-different spellings of the same visible name (NFC vs
     ///   NFD) collapse to the same sanitised string and therefore the same
     ///   file, rather than silently producing two files for one installer.
     /// - Strips every control character, including newlines, so the name can
-    ///   never inject a second line — and therefore never a second Markdown
-    ///   heading — into either the filename or the document body.
+    ///   never inject a second line into the filename.
     /// - Also strips the characters that make Markdown syntax "live"
-    ///   (`! [ ] ( ) \` # * _ < >`). Stripping newlines alone still leaves an
-    ///   image tag or heading marker active on the single remaining line, so
-    ///   this is what actually prevents `![x](url)` from reaching the
-    ///   document as a working image tag rather than inert text.
+    ///   (`! [ ] ( ) \` # * _ < >`) — not because a filename renders
+    ///   Markdown, but because aggressive stripping of anything unusual is
+    ///   the right posture for a filename specifically: nobody matches a
+    ///   filename against a boot picker, and filenames have real filesystem
+    ///   constraints a Markdown document does not.
     /// - Replaces "/" with "-" and removes ".." so the name can never be
     ///   mistaken for a path component that escapes the target directory.
     /// - Falls back to a fixed, non-empty name — "macOS", not "installer" —

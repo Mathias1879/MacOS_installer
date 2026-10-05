@@ -114,7 +114,7 @@ func throwsOnUnwritableDirectory() {
     }
 }
 
-@Test("a slash in the installer name cannot escape the target directory")
+@Test("a slash in the installer name cannot escape the target directory, even though the document body shows the name unstripped")
 func sanitisesFileName() throws {
     let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -122,7 +122,7 @@ func sanitisesFileName() throws {
         target: .appleSilicon, installerName: "macOS/../../Tahoe"
     )
 
-    // Whatever the name becomes, it must stay inside `dir`.
+    // Whatever the FILENAME becomes, it must stay inside `dir`.
     #expect(url.deletingLastPathComponent().standardizedFileURL == dir.standardizedFileURL)
 
     // Strengthened per Task 7's resolutions: the assertion above alone would
@@ -130,10 +130,14 @@ func sanitisesFileName() throws {
     // would either produce a dotfile or fail the write outright. Require a
     // real, non-empty, readable file with the expected content instead.
     #expect(url.lastPathComponent.isEmpty == false)
+
+    // Per fix round 2: the aggressive filename sanitiser is filename-only now.
+    // The document body goes through only the layer-agnostic (newline/control
+    // character) clean, so "/" and ".." — neither of which is a Markdown
+    // metacharacter nor a filesystem escape risk once it's just text in a
+    // file body — survive into the heading exactly as given.
     let text = try String(contentsOf: url, encoding: .utf8)
-    // The heading now carries the SAME sanitised name as the filename (fix
-    // round 1, Finding 1) — the raw, unsanitised name is never shown.
-    #expect(text.contains("# How to use your `macOS---Tahoe` installer"))
+    #expect(text.contains("# How to use your macOS/../../Tahoe installer"))
 }
 
 @Test("a newline plus a Markdown image tag in the installer name cannot inject a heading or a live image into the document")
@@ -173,6 +177,70 @@ func mutationProofForFinding1() throws {
     let text = try String(contentsOf: url, encoding: .utf8)
     #expect(text.contains("## Injected heading") == false)
     #expect(text.contains("![tracker]") == false)
+}
+
+/// Strips the backslash `InstructionExporter.markdownEscaped` inserts before
+/// a Markdown metacharacter, so a test can compare the rendered document
+/// against the plain name it was given, independent of whichever
+/// Markdown-safety mechanism the exporter uses internally. This is NOT a
+/// general Markdown parser — it just undoes the one escaping convention this
+/// codebase uses (`\` immediately before the escaped character), which is
+/// exactly what a test pinning fidelity of THIS exporter's output needs.
+private func unescapedMarkdown(_ text: String) -> String {
+    var result = ""
+    var previousWasBackslash = false
+    for character in text {
+        if previousWasBackslash {
+            result.append(character)
+            previousWasBackslash = false
+        } else if character == "\\" {
+            previousWasBackslash = true
+        } else {
+            result.append(character)
+        }
+    }
+    return result
+}
+
+@Test("a name containing Markdown grouping and emphasis characters appears in the document with those characters intact")
+func documentPreservesMarkdownPunctuationInName() throws {
+    let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+    // Covers all four characters fix round 2's brief calls out by name:
+    // "(", ")", "*", "_". Not a value Apple ships; chosen to exercise all
+    // four in one fixture. `macOS 15 (Beta)` below is the realistic one.
+    let name = "macOS 15 (Beta)_2*"
+
+    let url = try InstructionExporter(directory: dir).export(target: .intelT2, installerName: name)
+    let text = try String(contentsOf: url, encoding: .utf8)
+
+    // Round 1 DELETED these characters from the document. Round 2
+    // backslash-escapes them instead, which preserves them visually and in
+    // the raw file — read back as text, the real character is still there,
+    // just preceded by a backslash the reader (or a renderer) treats as
+    // nothing.
+    #expect(text.contains("("))
+    #expect(text.contains(")"))
+    #expect(text.contains("_"))
+    #expect(text.contains("*"))
+}
+
+@Test("the document's stated volume name equals \"Install \" plus the installer name, with punctuation preserved — the assertion that would have caught the parentheses defect")
+func volumeNameMatchesRealDriveName() throws {
+    let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+    // The realistic fixture named in fix round 2's brief: Apple does ship
+    // parenthesised beta titles, so this is reachable, not theoretical.
+    let name = "macOS 15 (Beta)"
+
+    let url = try InstructionExporter(directory: dir).export(target: .intelT2, installerName: name)
+    let text = try String(contentsOf: url, encoding: .utf8)
+
+    // createinstallmedia renames the real drive to "Install <name>" using
+    // the raw name (minus newlines/control characters, which can never
+    // survive onto a real volume name either). The document must claim that
+    // EXACT string — not a stripped one — or the user hunts the startup
+    // picker for a name that was never on the drive.
+    let expectedVolumeName = "Install \(name)"
+    #expect(unescapedMarkdown(text).contains("\"\(expectedVolumeName)\""))
 }
 
 @Test("NFC and NFD spellings of the same installer name normalise to one file")
