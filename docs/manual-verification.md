@@ -323,3 +323,25 @@ entirely on this working.
 
 Host used: ______________________  macOS written: ______________________
 Target Mac: ______________________  Date: ______________________
+
+### 15. The volume name in the instructions matches the real drive
+
+The exported instructions and the after-stage walkthrough both tell the user to look for a
+volume named `Install <installer name>` at the boot picker. That string is DERIVED by this
+tool, not read back from the drive, and has never been compared against what
+`createinstallmedia` actually produces. If it differs by even a word, the user is hunting
+for a name that is not on screen, which is indistinguishable to them from a failed write.
+
+- [ ] After a successful write, run `diskutil list` and record the volume's ACTUAL name
+      exactly as it appears.
+      Actual name: ______________________
+- [ ] Record what the exported instructions file says to look for.
+      Instructions say: ______________________
+- [ ] Confirm the two match character for character, including any parentheses or
+      punctuation in the macOS version's title.
+- [ ] Confirm the name shown in the Mac's own startup picker matches as well — it may
+      differ from the `diskutil` name.
+      Startup picker shows: ______________________
+
+If they differ, the derivation in `GuidanceCatalog` needs replacing with the name read back
+from the drive after the write completes.
