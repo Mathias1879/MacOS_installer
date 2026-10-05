@@ -59,15 +59,6 @@ struct CreateCommand: AsyncParsableCommand {
         let runner = RealCommandRunner()
         let bootVolume = try BootVolumeResolver(runner: runner).resolve()
 
-        let volumeResult = try DiskEnumerator(runner: runner).mountedVolumes()
-        // A volume that could not be read is otherwise indistinguishable from
-        // one that isn't plugged in, and the user is about to pick one of the
-        // drives that IS listed — so a read failure on another drive must be
-        // visible, not silent.
-        for failure in volumeResult.failures {
-            warn("could not read a volume — \(failure)")
-        }
-
         let catalog = await fetchCatalog(runner: runner)
         for failure in catalog.failures {
             warn("source unavailable — \(failure)")
@@ -86,8 +77,30 @@ struct CreateCommand: AsyncParsableCommand {
         // final "is now named" message already use) — showing it before that
         // name is known would mean either a wrong/generic name here or a
         // mismatch with the During and After stages. See task-8-report.md.
-        if let targetMac {
-            WalkthroughPresenter.show(.before, targetMac: targetMac, installerName: release.name, originalDriveName: nil)
+        //
+        // Enumeration must run AFTER this stage, not before it: the Before
+        // stage tells the user to plug in a drive, and a snapshot taken
+        // before that instruction cannot reflect a drive plugged in response
+        // to it. Routed through `BeforeStageOrdering` rather than left as two
+        // adjacent statements, so the order is enforced by that function's
+        // body and pinned by its test, not by trusting this call site stays
+        // in the same sequence. See task-8-fix-1.md.
+        let volumeResult = try BeforeStageOrdering.announceThenObserve(
+            announce: {
+                if let targetMac {
+                    WalkthroughPresenter.show(
+                        .before, targetMac: targetMac, installerName: release.name, originalDriveName: nil
+                    )
+                }
+            },
+            observe: { try DiskEnumerator(runner: runner).mountedVolumes() }
+        )
+        // A volume that could not be read is otherwise indistinguishable from
+        // one that isn't plugged in, and the user is about to pick one of the
+        // drives that IS listed — so a read failure on another drive must be
+        // visible, not silent.
+        for failure in volumeResult.failures {
+            warn("could not read a volume — \(failure)")
         }
 
         // CORRECTION: protected paths must be absolute and symlink-resolved
