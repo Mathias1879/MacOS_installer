@@ -158,6 +158,41 @@ private func hasUnescapedCharacter(_ target: Character, in text: String) -> Bool
     return false
 }
 
+/// Every physical line of `text` that CommonMark could read as an ATX
+/// heading — i.e. one beginning with `#`. Nothing further is filtered by
+/// prefix, so an injected heading of ANY depth is returned rather than
+/// quietly accepted.
+private func headingLines(in text: String) -> [String] {
+    text.split(separator: "\n", omittingEmptySubsequences: false)
+        .map(String.init)
+        .filter { $0.hasPrefix("#") }
+}
+
+/// Re-derives, from `GuidanceCatalog` rather than from the document, the
+/// complete list of heading lines the exported document must have: the
+/// exporter's own title line, then one `"## "` line per `.after` section for
+/// that target, in order (see `InstructionExporter.render(installerName:target:sections:)`
+/// and `renderedLines(for:)`).
+///
+/// Fix round 4 exists for this comparison. The assertion it replaces read
+/// `headingLines.allSatisfy { $0.hasPrefix("# How to use your") || $0.hasPrefix("## ") }`
+/// — and the attack it was named to catch injects the line
+/// `"## Injected heading"`, which wears exactly that `"## "` prefix. It
+/// therefore passed on the injected document and could not fail for its
+/// stated purpose. Asserting the expected VALUES, in order, means any extra
+/// heading line fails no matter what prefix it wears, and the test no longer
+/// has to guess which shapes are safe.
+///
+/// `installerName` is forwarded because `sections(for:target:installerName:originalDriveName:)`
+/// requires it, not because the headings use it: every `.after` heading is
+/// fixed prose, so only `titleLine` varies with the input.
+private func expectedHeadingLines(titleLine: String, installerName: String, target: TargetMac) -> [String] {
+    let sections = GuidanceCatalog.sections(
+        for: .after, target: target, installerName: installerName, originalDriveName: nil
+    )
+    return [titleLine] + sections.map { "## \($0.heading)" }
+}
+
 @Test("a newline plus a Markdown image tag in the installer name cannot inject a heading or a live image into the document")
 func sanitisesDocumentBodyAgainstMarkdownInjection() throws {
     let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
@@ -166,14 +201,22 @@ func sanitisesDocumentBodyAgainstMarkdownInjection() throws {
     let url = try InstructionExporter(directory: dir).export(target: .appleSilicon, installerName: malicious)
     let text = try String(contentsOf: url, encoding: .utf8)
 
-    // No second heading LINE was introduced. The attacker's newline was
-    // stripped before rendering, so its "##" marker can only land mid-line —
-    // never at the start of a physical line, which is the only place
-    // CommonMark treats "#" as heading syntax. Every line starting with "#"
-    // is still either this document's own title or a genuine "## " section
-    // heading.
-    let headingLines = text.split(separator: "\n").filter { $0.hasPrefix("#") }
-    #expect(headingLines.allSatisfy { $0.hasPrefix("# How to use your") || $0.hasPrefix("## ") })
+    // The exporter's title line, stated as the exact value it must be. This
+    // one string pins both halves of the fix: the attacker's two newlines are
+    // gone, so the "##" sits mid-line where CommonMark cannot read it as
+    // heading syntax at all, and the brackets carry backslashes so no image
+    // or link can form.
+    let expectedTitle = "# How to use your macOS Tahoe## Injected heading"
+        + "!\\[tracker\\](https://evil.example.com/pixel.png) installer"
+    let cleanedName = "macOS Tahoe## Injected heading![tracker](https://evil.example.com/pixel.png)"
+
+    // The document's heading lines are EXACTLY that title followed by this
+    // target's catalog section headings — no more. "## Injected heading"
+    // appearing anywhere as its own line breaks this equality.
+    #expect(
+        headingLines(in: text)
+            == expectedHeadingLines(titleLine: expectedTitle, installerName: cleanedName, target: .appleSilicon)
+    )
 
     // No live image/link syntax reached the document: every "[" and "]" that
     // came from the attacker's name is backslash-escaped, so CommonMark can
@@ -183,28 +226,54 @@ func sanitisesDocumentBodyAgainstMarkdownInjection() throws {
     #expect(hasUnescapedCharacter("]", in: text) == false)
 }
 
-@Test("reverting the sanitiser on the document body makes the injection test above fail")
-func mutationProofForFinding1() throws {
+@Test("an image tag in the installer name survives into the document only as backslash-escaped literal text")
+func documentCarriesImageTagOnlyAsEscapedText() throws {
     let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
     let malicious = "macOS Tahoe\n## Injected heading\n![tracker](https://evil.example.com/pixel.png)"
 
-    // Reproduce the UNSANITISED header this project's round-1 code used to
-    // write — it kept the attacker's newlines, so "##" actually lands at the
-    // start of its own line, which is what makes it a real CommonMark
-    // heading rather than three inert words of body text.
-    let unsanitisedHeader = "# How to use your \(malicious) installer"
-    let unsanitisedHeadingLines = unsanitisedHeader.split(separator: "\n").filter { $0.hasPrefix("#") }
-    #expect(unsanitisedHeadingLines.contains("## Injected heading"))
-    #expect(unsanitisedHeader.contains("![tracker]"))
-
-    // The fixed exporter strips the newlines before this text is ever built,
-    // so the same raw ingredients land mid-line instead of at a line start,
-    // and the brackets are escaped so no live link/image syntax can form.
     let url = try InstructionExporter(directory: dir).export(target: .appleSilicon, installerName: malicious)
     let text = try String(contentsOf: url, encoding: .utf8)
-    let headingLines = text.split(separator: "\n").filter { $0.hasPrefix("#") }
-    #expect(headingLines.allSatisfy { $0.hasPrefix("# How to use your") || $0.hasPrefix("## ") })
+
+    // This project's round-1 code wrote the name into the heading unchanged:
+    // it kept the attacker's newlines, so "##" landed at the start of its own
+    // line as a real CommonMark heading, and "![tracker](…)" rendered as a
+    // live tracking image. Both of those are now impossible, and this test
+    // pins the image half of it against the REAL export — not against a
+    // string the test built for itself, which is what the deleted assertions
+    // here did and why they could never fail.
     #expect(text.contains("![tracker]") == false)
+    #expect(text.contains("!\\[tracker\\](https://evil.example.com/pixel.png)"))
+}
+
+@Test("every newline in the installer name is stripped before rendering, which is the whole reason \"#\" needs no escaping")
+func stripsNewlinesFromNameBeforeRendering() throws {
+    let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+    // CR, LF and CRLF, each followed by heading syntax, so a half-done strip
+    // fails here too.
+    let name = "macOS\nTahoe\r## Injected heading\r\n### Deeper"
+
+    let url = try InstructionExporter(directory: dir).export(target: .intelT2, installerName: name)
+    let text = try String(contentsOf: url, encoding: .utf8)
+
+    // Letting "#" through unescaped (fix round 3) rests ENTIRELY on this:
+    // the name is interpolated mid-line in every template the exporter and
+    // `GuidanceCatalog` render, so once it cannot contain a newline, no
+    // character of it can ever begin a physical line. Asserted as values, on
+    // both templates that embed the name, so weakening the cleaning function
+    // fails here rather than leaving a silent hole.
+    let cleanedName = "macOSTahoe## Injected heading### Deeper"
+    #expect(text.contains("# How to use your \(cleanedName) installer"))
+    #expect(text.contains("\"Install \(cleanedName)\""))
+
+    // And the document's headings are still only its own, by value.
+    #expect(
+        headingLines(in: text)
+            == expectedHeadingLines(
+                titleLine: "# How to use your \(cleanedName) installer",
+                installerName: cleanedName,
+                target: .intelT2
+            )
+    )
 }
 
 @Test("a name containing Markdown grouping and emphasis characters appears in the document with those characters intact, and unescaped")
