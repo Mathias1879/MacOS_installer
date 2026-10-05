@@ -45,20 +45,37 @@ struct CreateCommand: AsyncParsableCommand {
         }
     }
 
+    /// The top-level sequence, readable in order without reading any
+    /// extracted method's body: ask which Mac this is for, resolve this
+    /// Mac's own boot volume, pick a release, enumerate drives, pick one,
+    /// confirm the erase, then do the erase/write and show what comes after.
+    /// Each phase's ordering guarantees (why Before precedes enumeration, why
+    /// During precedes the password prompt, why After follows a successful
+    /// write) live as comments on the phase itself, not here — see
+    /// `enumerateVolumes` and `writeAndFinish`.
     private func execute() async throws {
         try PrivilegeCheck.assertNotRoot()
 
-        // Asked before anything else, per the walkthrough's design: the
-        // After-stage instructions describe a specific physical Mac, and
-        // that answer cannot be guessed or deferred without risking the
-        // wrong boot steps later. `--brief` skips the question and every
-        // guidance stage below, each of which is only shown when `targetMac`
-        // is non-nil.
         let targetMac = try askTargetMacIfNeeded()
 
         let runner = RealCommandRunner()
         let bootVolume = try BootVolumeResolver(runner: runner).resolve()
 
+        let release = try await fetchRelease(runner: runner)
+        let volumes = try enumerateVolumes(runner: runner, targetMac: targetMac, release: release)
+
+        let targetDecision = try selectTarget(volumes: volumes, bootVolume: bootVolume, release: release)
+        let target = targetDecision.volume
+
+        let uuid = try confirmErase(target: target, verdict: targetDecision.verdict)
+
+        try await writeAndFinish(target: target, uuid: uuid, release: release, runner: runner, targetMac: targetMac)
+    }
+
+    /// Fetches every installer source, warns (without failing) about any that
+    /// didn't respond, and resolves `--version` to one release — or prints
+    /// the table and exits if no release was picked.
+    private func fetchRelease(runner: any CommandRunner) async throws -> InstallerRelease {
         let catalog = await fetchCatalog(runner: runner)
         for failure in catalog.failures {
             warn("source unavailable — \(failure)")
@@ -69,22 +86,26 @@ struct CreateCommand: AsyncParsableCommand {
             print("\nPick one with --version <version>.")
             throw ExitCode.failure
         }
+        return release
+    }
 
-        // Shown here, right after the release is known and before any of the
-        // real work (download, verify, erase, write) begins. The brief's
-        // stated order put this stage before version selection, but its text
-        // needs `release.name` (the same value every other stage and the
-        // final "is now named" message already use) — showing it before that
-        // name is known would mean either a wrong/generic name here or a
-        // mismatch with the During and After stages. See task-8-report.md.
-        //
-        // Enumeration must run AFTER this stage, not before it: the Before
-        // stage tells the user to plug in a drive, and a snapshot taken
-        // before that instruction cannot reflect a drive plugged in response
-        // to it. Routed through `BeforeStageOrdering` rather than left as two
-        // adjacent statements, so the order is enforced by that function's
-        // body and pinned by its test, not by trusting this call site stays
-        // in the same sequence. See task-8-fix-1.md.
+    /// Shows the Before stage, if a target Mac was chosen, and only then
+    /// enumerates mounted volumes — in that order, enforced by
+    /// `BeforeStageOrdering` rather than left to this call site, because the
+    /// Before stage tells the user to plug a drive in and a snapshot taken
+    /// before that instruction cannot reflect a drive plugged in response to
+    /// it. The stage's text needs `release.name`, the same value every other
+    /// stage and the final "is now named" message use, which is why this
+    /// runs after the release is already known rather than before it. See
+    /// task-8-fix-1.md and task-8-report.md.
+    ///
+    /// A volume that could not be read is otherwise indistinguishable from
+    /// one that isn't plugged in, and the user is about to pick one of the
+    /// drives that IS listed — so a read failure on another drive must be
+    /// visible, not silent.
+    private func enumerateVolumes(
+        runner: any CommandRunner, targetMac: TargetMac?, release: InstallerRelease
+    ) throws -> [Volume] {
         let volumeResult = try BeforeStageOrdering.announceThenObserve(
             announce: {
                 if let targetMac {
@@ -95,14 +116,22 @@ struct CreateCommand: AsyncParsableCommand {
             },
             observe: { try DiskEnumerator(runner: runner).mountedVolumes() }
         )
-        // A volume that could not be read is otherwise indistinguishable from
-        // one that isn't plugged in, and the user is about to pick one of the
-        // drives that IS listed — so a read failure on another drive must be
-        // visible, not silent.
         for failure in volumeResult.failures {
             warn("could not read a volume — \(failure)")
         }
+        return volumeResult.volumes
+    }
 
+    /// Evaluates every mounted volume against the guard rules and resolves
+    /// `--volume` to exactly one of them. The warning is the only thing a
+    /// `selectableWithWarning` volume carries that a bare erase message does
+    /// not — it must be printed here, immediately above the confirmation
+    /// that follows, which is the one moment it can still change the user's
+    /// mind. `VolumeTableFormatter` also renders it, but only on the listing
+    /// path; a targeted `--volume` never goes through that path at all.
+    private func selectTarget(
+        volumes: [Volume], bootVolume: BootVolume, release: InstallerRelease
+    ) throws -> VolumeGuard.VolumeDecision {
         // CORRECTION: protected paths must be absolute and symlink-resolved
         // before reaching VolumeGuard, which documents that contract and is
         // deliberately pure (resolving a symlink needs filesystem access).
@@ -112,53 +141,59 @@ struct CreateCommand: AsyncParsableCommand {
         let protectedCacheDirectory = CatalogCache.defaultDirectory.resolvingSymlinksInPath().path
 
         let decisions = VolumeGuard.evaluate(
-            volumes: volumeResult.volumes,
+            volumes: volumes,
             bootVolume: bootVolume,
             requiredBytes: release.sizeBytes,
             protectedPaths: [protectedCacheDirectory]
         )
 
         let targetDecision = try resolveTarget(from: decisions)
-        let target = targetDecision.volume
-
-        // The warning is the only thing a `selectableWithWarning` volume
-        // carries that a bare erase message does not — it must be shown here,
-        // immediately above the confirmation, which is the one moment it can
-        // still change the user's mind. `VolumeTableFormatter` also renders
-        // it, but only on the listing path; a targeted `--volume` never goes
-        // through that path at all.
         if case .selectableWithWarning(let warning) = targetDecision.verdict {
             print("  ⚠ \(warning)")
         }
+        return targetDecision
+    }
 
+    /// Prints the erase banner, then confirms it — via the typed-name prompt
+    /// for a flagged volume (`--yes` must never remove that control; see
+    /// `VolumeGuard.requiresTypedConfirmation`), or immediately otherwise.
+    /// Returns the volume's UUID, checked before the prompt so the user
+    /// learns the volume cannot be targeted before typing its name, not
+    /// after.
+    private func confirmErase(target: Volume, verdict: VolumeGuard.Verdict) throws -> String {
         print("")
         print("  This will ERASE \(target.displayName) (\(target.deviceIdentifier)).")
         print("  Everything on it will be destroyed.")
         print("")
 
-        // Checked before the prompt, not after: the user should learn the
-        // volume cannot be targeted before typing its name, not after.
         guard let uuid = target.volumeUUID else {
             print("  That volume has no stable identifier, so it cannot be targeted safely.")
             throw ExitCode.failure
         }
 
-        // `--yes` must never remove the typed-name control the spec requires
-        // for a flagged (e.g. Time Machine-named) volume — see
-        // `VolumeGuard.requiresTypedConfirmation`.
-        if VolumeGuard.requiresTypedConfirmation(yesFlag: yes, verdict: targetDecision.verdict) {
+        if VolumeGuard.requiresTypedConfirmation(yesFlag: yes, verdict: verdict) {
             print("  Type the volume name to confirm: ", terminator: "")
             guard ConfirmationPrompt.requireTypedName(target.displayName) else {
                 print("  Names did not match. Nothing was changed.")
                 throw ExitCode.failure
             }
         }
+        return uuid
+    }
 
-        // Shown immediately before the real work starts: the password prompt
-        // is the very next thing that happens, and this stage is what
-        // pre-announces it so it doesn't read as a hang or a hidden surprise.
-        // `target.displayName` is the drive's name as it exists right now,
-        // before anything has erased or renamed it.
+    /// Shows the During stage, prepares and writes the installer, then shows
+    /// the After stage and exports its instructions — strictly in that
+    /// order. `target.displayName` is the drive's name as it exists right
+    /// now, before anything has erased or renamed it; the During stage is
+    /// shown here, immediately before the real work starts, because the
+    /// password prompt (triggered partway through `prepareInstaller`) is the
+    /// very next thing that happens and this stage is what pre-announces it.
+    /// The After stage runs only once `writeInstaller` has returned without
+    /// throwing, since it describes a drive that is already renamed and
+    /// ready to boot from.
+    private func writeAndFinish(
+        target: Volume, uuid: String, release: InstallerRelease, runner: any CommandRunner, targetMac: TargetMac?
+    ) async throws {
         if let targetMac {
             WalkthroughPresenter.show(
                 .during, targetMac: targetMac, installerName: release.name, originalDriveName: target.displayName
@@ -175,9 +210,6 @@ struct CreateCommand: AsyncParsableCommand {
                 + "\"Install \(release.name)\"."
         )
 
-        // Only after a successful write: the After stage describes a drive
-        // that is already renamed and ready to boot from, which is only true
-        // once `writeInstaller` above has returned without throwing.
         if let targetMac {
             WalkthroughPresenter.show(.after, targetMac: targetMac, installerName: release.name, originalDriveName: nil)
             exportInstructions(targetMac: targetMac, installerName: release.name)

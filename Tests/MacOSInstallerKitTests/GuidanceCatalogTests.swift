@@ -72,6 +72,27 @@ func duringStagePreAnnouncesSurprises() {
     #expect(all.contains("removable volume") || all.contains("permission"))
 }
 
+@Test("the during stage lists its steps in the order they actually happen")
+func duringStageStepsMatchRealOrder() {
+    let sections = GuidanceCatalog.sections(
+        for: .during, target: .appleSilicon, installerName: "macOS Tahoe", originalDriveName: "SanDisk Ultra"
+    )
+    let steps = sections.first { $0.heading == "What happens now" }?.steps
+
+    // Pinned to the real sequence: download (InstallerPreparer.swift),
+    // digest check, then assembly — where `InstallAssistantAssembler.swift`
+    // invokes `sudo` for the first time and the password prompt actually
+    // appears — then the write. A shape-only "password text is present"
+    // assertion would not catch the password step being in the wrong
+    // position, which is exactly the defect this test exists to pin.
+    #expect(steps == [
+        "The installer downloads from Apple (this is the slow part)",
+        "The download is checked to make sure it arrived intact",
+        "The installer app is installed — macOS asks for your password here, see the note below",
+        "SanDisk Ultra is erased and the installer is written to it",
+    ])
+}
+
 @Test("the after stage gives only the selected target's boot method")
 func afterStageIsSingleTarget() {
     let silicon = GuidanceCatalog.sections(

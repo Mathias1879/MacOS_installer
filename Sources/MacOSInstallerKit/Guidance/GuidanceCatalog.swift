@@ -82,9 +82,9 @@ public enum GuidanceCatalog {
             GuidanceSection(
                 heading: "What happens now",
                 steps: [
-                    "macOS asks for your password — see the note below",
                     "The installer downloads from Apple (this is the slow part)",
                     "The download is checked to make sure it arrived intact",
+                    "The installer app is installed — macOS asks for your password here, see the note below",
                     "\(drive) is erased and the installer is written to it",
                 ]
             ),
