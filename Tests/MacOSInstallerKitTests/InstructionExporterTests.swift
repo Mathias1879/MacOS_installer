@@ -35,6 +35,15 @@ private func assertSafeOutcome(installerName: String, target: TargetMac, in dir:
     }
 }
 
+// NOTE on scope (Finding 3, fix round 5): the success branch above checks
+// only path containment and file existence, never content. That is the
+// right scope for the fuzz-style callers below it — control characters, a
+// NUL byte, a name over 255 bytes — whose property under test is "does not
+// crash and does not escape the directory", not "produces any particular
+// text". Content correctness for well-formed names is covered elsewhere
+// (e.g. `sanitisesFileName`, the injection tests). Do not read the absence
+// of a content check here as an oversight and either weaken or widen it.
+
 @Test("writes a Markdown file named after the installer and the target")
 func writesNamedFile() throws {
     let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
@@ -380,12 +389,27 @@ func handlesNameLongerThan255Bytes() throws {
 @Test("a whitespace-only installer name falls back to readable wording, not a doubled-up word")
 func whitespaceOnlyNameFallsBackSensibly() throws {
     let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+    let name = "   "
 
-    let url = try InstructionExporter(directory: dir).export(target: .appleSilicon, installerName: "   ")
+    let url = try InstructionExporter(directory: dir).export(target: .appleSilicon, installerName: name)
 
-    #expect(url.lastPathComponent.contains("installer installer") == false)
+    // Finding 2 (fix round 5): a bare absence check ("installer installer"
+    // not present) would also pass for any other malformed fallback — a
+    // stray double space, or a different doubled word entirely. Assert the
+    // real values instead.
+    //
+    // The FILENAME goes through `sanitised(_:)`, which trims and falls back
+    // to the fixed, non-empty "macOS" for an all-whitespace name (its own
+    // doc comment: "macOS", not "installer", so it reads as "your macOS
+    // installer" rather than "your installer installer").
+    #expect(url.lastPathComponent == "How to use your macOS installer (\(TargetMac.appleSilicon.rawValue)).md")
+
+    // The document BODY only goes through `layerAgnosticallyCleaned`, which
+    // strips newlines and control characters — neither of which a plain
+    // space is — so the raw whitespace survives into the title unchanged.
+    // The "macOS" fallback is filename-only; it never applies here.
     let text = try String(contentsOf: url, encoding: .utf8)
-    #expect(text.contains("installer installer") == false)
+    #expect(text.contains("# How to use your \(name) installer"))
 }
 
 /// Per Finding 5: this exhaustive switch is an intentional compile-time
@@ -412,5 +436,33 @@ func documentStatesTargetForEveryCase() throws {
         let text = try String(contentsOf: url, encoding: .utf8)
 
         #expect(text.contains("This file is for: \(target.label)"))
+    }
+}
+
+/// Finding 1 (fix round 5): `expectedHeadingLines` above is a sound oracle
+/// for the injection tests ONLY because every `.after` heading is fixed
+/// prose. It builds its expectation by calling the SAME
+/// `GuidanceCatalog.sections(for: .after, …)` that `InstructionExporter.export`
+/// calls, so for those lines, expected and actual come from one code path —
+/// a defect inside `GuidanceCatalog.after`'s heading construction (e.g.
+/// interpolating the untrusted installer name into a heading) would be
+/// mirrored on both sides of `==` and could never fail there. This test is
+/// independent of that coupling: it inspects `GuidanceCatalog`'s own output
+/// directly, for every `TargetMac`, and fails the moment that precondition
+/// stops holding — which is precisely when `expectedHeadingLines` would stop
+/// being trustworthy.
+@Test("no .after section heading contains any part of the installer name, for any target")
+func afterHeadingsNeverContainInstallerName() {
+    let fixtureName = "Zzyzx-Quokka-19284"
+
+    for target in TargetMac.allCases {
+        exhaustivelyCheckTargetMac(target)
+
+        let sections = GuidanceCatalog.sections(
+            for: .after, target: target, installerName: fixtureName, originalDriveName: nil
+        )
+        for section in sections {
+            #expect(section.heading.contains(fixtureName) == false)
+        }
     }
 }
