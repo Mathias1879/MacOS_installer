@@ -149,7 +149,7 @@ func backoffReturnsExactDurations() {
 @Test("total backoff across the default attempt limit stays under 10 seconds")
 func totalBackoffAcrossDefaultAttemptsIsBounded() {
     let backoff = Downloader.defaultBackoff
-    let defaultMaximumAttempts = 3
+    let defaultMaximumAttempts = Downloader.defaultMaximumAttempts
 
     // Waits happen after every failed attempt except the last one, so with
     // 3 attempts there are 2 waits: backoff(1) + backoff(2) = 1s + 2s = 3s.

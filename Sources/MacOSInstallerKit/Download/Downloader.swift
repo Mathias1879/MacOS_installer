@@ -65,10 +65,16 @@ public struct Downloader {
         .seconds(1 << (attempt - 1))
     }
 
+    /// The default retry ceiling used by `init` when the caller does not
+    /// specify one. Named so tests (and anything else that needs to reason
+    /// about the default) bind to this single value instead of copying the
+    /// literal.
+    public static let defaultMaximumAttempts = 3
+
     public init(
         transfer: any ResumableTransfer,
         fileManager: FileManager = .default,
-        maximumAttempts: Int = 3,
+        maximumAttempts: Int = Downloader.defaultMaximumAttempts,
         backoff: @escaping @Sendable (Int) -> Duration = Downloader.defaultBackoff,
         onRetry: @escaping @Sendable (Int, Duration, any Error) -> Void = { _, _, _ in }
     ) {
