@@ -28,6 +28,9 @@ struct CreateCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Skip the typed confirmation. Use only in scripts you trust.")
     var yes = false
 
+    @Flag(name: .long, help: "Skip the guided walkthrough and print only what's necessary.")
+    var brief = false
+
     func run() async throws {
         do {
             try await execute()
@@ -44,6 +47,14 @@ struct CreateCommand: AsyncParsableCommand {
 
     private func execute() async throws {
         try PrivilegeCheck.assertNotRoot()
+
+        // Asked before anything else, per the walkthrough's design: the
+        // After-stage instructions describe a specific physical Mac, and
+        // that answer cannot be guessed or deferred without risking the
+        // wrong boot steps later. `--brief` skips the question and every
+        // guidance stage below, each of which is only shown when `targetMac`
+        // is non-nil.
+        let targetMac = try askTargetMacIfNeeded()
 
         let runner = RealCommandRunner()
         let bootVolume = try BootVolumeResolver(runner: runner).resolve()
@@ -66,6 +77,17 @@ struct CreateCommand: AsyncParsableCommand {
             print(ReleaseTableFormatter.render(catalog.releases))
             print("\nPick one with --version <version>.")
             throw ExitCode.failure
+        }
+
+        // Shown here, right after the release is known and before any of the
+        // real work (download, verify, erase, write) begins. The brief's
+        // stated order put this stage before version selection, but its text
+        // needs `release.name` (the same value every other stage and the
+        // final "is now named" message already use) — showing it before that
+        // name is known would mean either a wrong/generic name here or a
+        // mismatch with the During and After stages. See task-8-report.md.
+        if let targetMac {
+            WalkthroughPresenter.show(.before, targetMac: targetMac, installerName: release.name, originalDriveName: nil)
         }
 
         // CORRECTION: protected paths must be absolute and symlink-resolved
@@ -119,6 +141,17 @@ struct CreateCommand: AsyncParsableCommand {
             }
         }
 
+        // Shown immediately before the real work starts: the password prompt
+        // is the very next thing that happens, and this stage is what
+        // pre-announces it so it doesn't read as a hang or a hidden surprise.
+        // `target.displayName` is the drive's name as it exists right now,
+        // before anything has erased or renamed it.
+        if let targetMac {
+            WalkthroughPresenter.show(
+                .during, targetMac: targetMac, installerName: release.name, originalDriveName: target.displayName
+            )
+        }
+
         print("  Preparing \(release.name) \(release.version)…")
         let app = try await prepareInstaller(for: release, runner: runner)
 
@@ -128,6 +161,53 @@ struct CreateCommand: AsyncParsableCommand {
             "  Done. \(target.displayName) (\(target.deviceIdentifier)) is now named "
                 + "\"Install \(release.name)\"."
         )
+
+        // Only after a successful write: the After stage describes a drive
+        // that is already renamed and ready to boot from, which is only true
+        // once `writeInstaller` above has returned without throwing.
+        if let targetMac {
+            WalkthroughPresenter.show(.after, targetMac: targetMac, installerName: release.name, originalDriveName: nil)
+            exportInstructions(targetMac: targetMac, installerName: release.name)
+        }
+    }
+
+    // MARK: - Walkthrough
+
+    /// Returns the Mac the finished installer will boot, or nil under
+    /// `--brief`. Fails closed — rather than guessing or defaulting — when
+    /// the picker cannot get an answer, which happens both at end-of-input
+    /// (stdin is not a terminal: piped input, CI) and after repeated
+    /// unresolved answers; `TargetMacPicker.ask` returns nil for both, and
+    /// neither case leaves this command able to say which Mac the After
+    /// stage's boot steps are actually for. Proceeding anyway would hand
+    /// someone instructions for a machine that isn't theirs, with nothing in
+    /// the output to tell them so.
+    private func askTargetMacIfNeeded() throws -> TargetMac? {
+        guard !brief else { return nil }
+
+        guard let targetMac = TargetMacPicker.ask() else {
+            print("")
+            print("  Could not get an answer for which Mac this installer is for.")
+            print("  Answer the prompt above, or re-run with --brief to skip the walkthrough.")
+            throw ExitCode.failure
+        }
+        return targetMac
+    }
+
+    /// Writes the After-stage instructions to disk. A failure here must not
+    /// fail the run: by the time this is called, `writeInstaller` has already
+    /// returned successfully, so the user has a working installer in hand —
+    /// turning a saved-file problem into a reported failure would tell them
+    /// their installer failed when it didn't. The After stage was already
+    /// printed above, so the steps are not lost even if the file is.
+    private func exportInstructions(targetMac: TargetMac, installerName: String) {
+        do {
+            let url = try InstructionExporter().export(target: targetMac, installerName: installerName)
+            print("  Boot instructions for that Mac were saved to: \(url.path)")
+        } catch {
+            let log = DiagnosticLog(directory: DiagnosticLog.defaultDirectory)
+            print(explain(error, log: log).rendered())
+        }
     }
 
     // MARK: - Steps

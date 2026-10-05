@@ -159,6 +159,12 @@ private func renderedExplanationSamples() -> [String] {
     diskutilParseErrors.forEach(exhaustivelyCheckDiskutilParseError)
     rendered += diskutilParseErrors.map { $0.explanation.rendered() }
 
+    let exportErrors: [ExportError] = [
+        .cannotWrite("The file couldn't be saved because you don't have permission."),
+    ]
+    exportErrors.forEach(exhaustivelyCheckExportError)
+    rendered += exportErrors.map { $0.explanation.rendered() }
+
     return rendered
 }
 
@@ -247,5 +253,11 @@ private func exhaustivelyCheckDiskutilParseError(_ error: DiskutilParseError) {
     case .notAPropertyList: break
     case .missingDeviceIdentifier: break
     case .missingInternalFlag: break
+    }
+}
+
+private func exhaustivelyCheckExportError(_ error: ExportError) {
+    switch error {
+    case .cannotWrite: break
     }
 }

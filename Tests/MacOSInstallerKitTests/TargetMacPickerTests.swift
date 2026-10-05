@@ -48,6 +48,26 @@ func unresolvedAnswersStillConsumeAttempts() {
     #expect(readCount == 3)
 }
 
+@Test("an immediate end of input returns nil without consuming an attempt or looping")
+func immediateEndOfInputResolvesToNilImmediately() {
+    // Simulates stdin not being a terminal (piped input, CI): `readLine`
+    // returns nil on the very first call, before the user has answered
+    // anything. `create` relies on this exact nil to fail closed rather than
+    // guess a target — see `CreateCommand`'s handling of `TargetMacPicker.ask`.
+    var readCount = 0
+    let target = TargetMacPicker.ask(
+        readLine: {
+            readCount += 1
+            return nil
+        },
+        print: { _ in },
+        maximumAttempts: 3
+    )
+
+    #expect(target == nil)
+    #expect(readCount == 1)
+}
+
 @Test("the picker still resolves a correct first answer")
 func correctFirstAnswerResolvesImmediately() {
     var inputs = ["1"]

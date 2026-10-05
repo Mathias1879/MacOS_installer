@@ -227,3 +227,44 @@ public struct InstructionExporter {
         return stripped.isEmpty ? "macOS" : stripped
     }
 }
+
+/// Deferred from Task 7 because nothing called `export` yet — an
+/// `Explainable` conformance with no caller is untestable dead weight.
+/// Task 8 is that caller, so a failed export is now reachable from `create`
+/// and must explain itself rather than fall through `explain(_:log:)`'s
+/// generic "this is a gap in the tool" fallback, which is wrong for an
+/// ordinary condition like a read-only home directory.
+///
+/// `cannotWrite`'s payload is a raw `Error.localizedDescription` — kept out
+/// of `whatHappened` for the same reason `MediaWriteError.authenticationFailed`
+/// keeps its payload out of view (see that type's `explanation`): it can
+/// contain OS-specific phrasing or quoted paths that read as a crash dump,
+/// not a sentence written for someone who has never opened Terminal. It is
+/// reported in full to `technicalDetail`, which only ever reaches the log.
+extension ExportError: Explainable {
+    public var explanation: UserFacingError {
+        switch self {
+        case .cannotWrite:
+            return UserFacingError(
+                title: "The instructions couldn't be saved",
+                whatHappened: "The step-by-step instructions for starting up the other Mac could not "
+                    + "be written to a file.",
+                whatItMeans: "This is usually a permissions problem with the folder they were being "
+                    + "saved to, or that folder's disk has no room left. The USB drive itself was not "
+                    + "affected and is ready to use.",
+                whatToDoNext: [
+                    "The steps were already printed above — you can copy them down by hand",
+                    "Check that this Mac can save files to its Desktop",
+                    "Run this command again later to get a fresh copy of the file",
+                ]
+            )
+        }
+    }
+
+    public var technicalDetail: String {
+        switch self {
+        case .cannotWrite(let message):
+            return "ExportError.cannotWrite message=\(message)"
+        }
+    }
+}
