@@ -205,3 +205,18 @@ internet to install (Apple's article says nothing of the kind and the whole poin
 installer). For Plan 4: fact-check the plan's own user-facing strings against primary sources BEFORE
 dispatch, and check them against earlier tasks' findings too — external verification does not catch
 internal contradiction.
+
+## Carried from Plan 3, Task 8
+
+**Hard-failure messages go to stdout, not stderr.** `CreateCommand` prints every fatal message with
+`print()` — "Pick one with --version", "Names did not match", the non-interactive target failure, the
+export failure explanation, and the top-level `explain()` output. Only `warn()` uses stderr. A user
+redirecting stdout to a file sees none of the failures. This is a consistent codebase-wide convention
+rather than a Task 8 defect, so changing it means touching every exit site in one deliberate pass and
+deciding the rule: errors and warnings to stderr, guidance and progress to stdout.
+
+**`CreateCommand.execute()` is the orchestration bottleneck.** Both sequencing defects this plan hit —
+the Before stage printing after volume enumeration, and the During stage claiming the password prompt
+comes first when it comes third — are properties of this one function's order of operations. It is
+excluded from coverage by design, which means ordering is the one thing reviews must read by eye.
+Keep it short enough to read as a sequence.
