@@ -50,7 +50,10 @@ func writesNamedFile() throws {
 
     let url = try InstructionExporter(directory: dir).export(target: .intelPreT2, installerName: "macOS Tahoe")
 
-    #expect(url.lastPathComponent == "How to use your macOS Tahoe installer (intelPreT2).md")
+    // I5: a short human slug, not the raw enum case name — "intelPreT2" sat
+    // right under a first line that already spells out the same Mac in
+    // words ("This file is for: An Intel Mac without a T2 security chip").
+    #expect(url.lastPathComponent == "How to use your macOS Tahoe installer (Intel without T2).md")
     #expect(FileManager.default.fileExists(atPath: url.path))
 }
 
@@ -402,7 +405,7 @@ func whitespaceOnlyNameFallsBackSensibly() throws {
     // to the fixed, non-empty "macOS" for an all-whitespace name (its own
     // doc comment: "macOS", not "installer", so it reads as "your macOS
     // installer" rather than "your installer installer").
-    #expect(url.lastPathComponent == "How to use your macOS installer (\(TargetMac.appleSilicon.rawValue)).md")
+    #expect(url.lastPathComponent == "How to use your macOS installer (Apple silicon).md")
 
     // The document BODY only goes through `layerAgnosticallyCleaned`, which
     // strips newlines and control characters — neither of which a plain
@@ -423,6 +426,28 @@ private func exhaustivelyCheckTargetMac(_ target: TargetMac) {
     case .intelT2: break
     case .intelPreT2: break
     }
+}
+
+/// I5 of the final fix round: every case's filename slug must be a short
+/// human phrase, never the raw Swift enum case name (e.g. "intelPreT2"), and
+/// the three slugs must stay distinct from one another — otherwise two
+/// different targets could collide onto the same filename for the same
+/// installer, silently overwriting one export with the other.
+@Test("every TargetMac's exported filename uses a human slug, and all three are distinct")
+func everyTargetUsesADistinctHumanSlug() throws {
+    let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+
+    var filenames: [String] = []
+    for target in TargetMac.allCases {
+        exhaustivelyCheckTargetMac(target)
+
+        let url = try InstructionExporter(directory: dir).export(target: target, installerName: "macOS Tahoe")
+        filenames.append(url.lastPathComponent)
+
+        #expect(url.lastPathComponent.contains(target.rawValue) == false)
+    }
+
+    #expect(Set(filenames).count == TargetMac.allCases.count)
 }
 
 @Test("the document states which Mac the export is for, in words, for every TargetMac case")

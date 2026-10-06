@@ -262,3 +262,33 @@ func softwareUpdatePayloadTellsUserToFetchFirst() async throws {
             .contains("softwareupdate --fetch-full-installer")
     )
 }
+
+// MARK: - C3: refusing an unusable release before any confirmation
+
+/// `assertUsable` is what `CreateCommand.execute()` calls immediately after
+/// `fetchRelease`, before the Before stage, volume enumeration, or the typed
+/// erase confirmation ever run — so this pins the exact error for every
+/// payload kind that must be refused there, independent of `prepare`'s own
+/// (still-present) check.
+@Test("assertUsable throws softwareUpdateOnly for a softwareUpdate payload, before anything else runs")
+func assertUsableRejectsSoftwareUpdatePayload() {
+    #expect(throws: InstallerPreparationError.softwareUpdateOnly(version: "26.7")) {
+        try InstallerPreparer.assertUsable(release(payload: .softwareUpdate(version: "26.7")))
+    }
+}
+
+@Test("assertUsable throws legacyAssemblyNotSupported for a legacyESD payload")
+func assertUsableRejectsLegacyESDPayload() {
+    #expect(throws: InstallerPreparationError.legacyAssemblyNotSupported) {
+        try InstallerPreparer.assertUsable(release(payload: .legacyESD(urls: [])))
+    }
+}
+
+@Test("assertUsable does not throw for a payload prepare can actually use")
+func assertUsableAcceptsUsablePayloads() throws {
+    let url = URL(string: "https://swcdn.apple.com/x/InstallAssistant.pkg")!
+    try InstallerPreparer.assertUsable(release(payload: .installAssistant(url: url)))
+    try InstallerPreparer.assertUsable(
+        release(payload: .localApplication(path: URL(fileURLWithPath: "/Applications/Install macOS Tahoe.app")))
+    )
+}

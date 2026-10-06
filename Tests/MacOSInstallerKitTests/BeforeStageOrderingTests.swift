@@ -24,7 +24,7 @@ private let emptyDiskListPlist = """
 </plist>
 """
 
-@Test("announces before observing, in that order — never the reverse")
+@Test("announces, then acknowledges, then observes — in exactly that order, never the reverse")
 func announceRunsStrictlyBeforeObserve() throws {
     let runner = FakeCommandRunner()
     runner.stub(standardOutput: emptyDiskListPlist, for: "/usr/sbin/diskutil list -plist")
@@ -35,6 +35,9 @@ func announceRunsStrictlyBeforeObserve() throws {
         announce: {
             events.append("before-stage-shown")
         },
+        acknowledge: {
+            events.append("user-acknowledged")
+        },
         observe: {
             events.append("volume-enumeration-ran")
             return try DiskEnumerator(runner: runner).mountedVolumes()
@@ -42,31 +45,46 @@ func announceRunsStrictlyBeforeObserve() throws {
     )
 
     // The order, not just the membership: this is what would stay green
-    // under the regression (enumerate-then-announce) if it only checked
-    // that both strings appeared somewhere in `events`.
-    #expect(events == ["before-stage-shown", "volume-enumeration-ran"])
+    // under the regression (enumerate-then-announce, or an acknowledge phase
+    // that got skipped or reordered) if it only checked that all three
+    // strings appeared somewhere in `events`.
+    //
+    // MUTATION PROOF (C1): delete the `acknowledge()` call from
+    // `BeforeStageOrdering.announceThenObserve`'s body (leaving only
+    // `announce()` then `return try observe()`, i.e. the exact defect this
+    // type exists to prevent) and this assertion fails — `events` comes back
+    // as `["before-stage-shown", "volume-enumeration-ran"]`, two elements,
+    // which cannot equal the three-element array below.
+    #expect(events == ["before-stage-shown", "user-acknowledged", "volume-enumeration-ran"])
     #expect(result.volumes.isEmpty)
     #expect(runner.didInvoke(containing: "diskutil list -plist"))
 }
 
-@Test("the announcement's effect is visible before the enumerator's command ever runs")
+@Test("the announcement's effect is visible before acknowledge runs, and acknowledge's before the enumerator's command ever runs")
 func announcementPrecedesTheUnderlyingCommandInvocation() throws {
     let runner = FakeCommandRunner()
     runner.stub(standardOutput: emptyDiskListPlist, for: "/usr/sbin/diskutil list -plist")
 
     var announced = false
+    var acknowledged = false
 
     _ = try BeforeStageOrdering.announceThenObserve(
         announce: {
             announced = true
         },
-        observe: {
-            // If this closure's invocation of DiskEnumerator ran first, the
-            // flag would still be false right here — this is the same
-            // "snapshot taken before the instruction was shown" failure mode
-            // described in task-8-fix-1.md, reproduced at the seam instead of
-            // through the full `create` command.
+        acknowledge: {
+            // If `announce` ran after `acknowledge`, this flag would still be
+            // false here.
             #expect(announced)
+            acknowledged = true
+        },
+        observe: {
+            // If this closure's invocation of DiskEnumerator ran before
+            // `acknowledge`, this flag would still be false right here — this
+            // is the same "snapshot taken before the user could act on the
+            // instruction" failure mode C1 describes, reproduced at the seam
+            // instead of through the full `create` command.
+            #expect(acknowledged)
             return try DiskEnumerator(runner: runner).mountedVolumes()
         }
     )

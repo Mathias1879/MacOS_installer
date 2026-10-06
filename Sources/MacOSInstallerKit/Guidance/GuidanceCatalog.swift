@@ -36,17 +36,42 @@ public enum GuidanceCatalog {
     ///   "Install \(installerName)", so `.after` derives that name itself
     ///   rather than accepting it as a parameter — a caller cannot pass the
     ///   wrong name for a value it is never asked for.
+    /// - Parameter payload: Which of the two payload shapes that can still
+    ///   reach the During stage this release has. `.legacyESD` and
+    ///   `.softwareUpdate` have no case here because `InstallerPreparer.assertUsable`
+    ///   — called from `CreateCommand.execute()` immediately after the
+    ///   release is fetched, before the Before stage is even shown — rejects
+    ///   both. By the time `.during` is ever rendered, only these two kinds
+    ///   of release remain. Ignored for `.before` and `.after`, the same way
+    ///   `originalDriveName` is.
     public static func sections(
         for stage: GuidanceStage,
         target: TargetMac,
         installerName: String,
-        originalDriveName: String?
+        originalDriveName: String?,
+        payload: DuringPayloadKind = .needsDownload
     ) -> [GuidanceSection] {
         switch stage {
         case .before: return before(installerName: installerName)
-        case .during: return during(driveName: originalDriveName)
+        case .during: return during(driveName: originalDriveName, payload: payload)
         case .after: return after(target: target, installerName: installerName)
         }
+    }
+
+    /// Which of the two payload shapes that can reach the During stage this
+    /// release has — see `sections(for:target:installerName:originalDriveName:payload:)`
+    /// for why there is no case for `.legacyESD` or `.softwareUpdate`.
+    public enum DuringPayloadKind: Sendable {
+        /// `InstallerPreparer.prepare` returns the already-installed app
+        /// unchanged for `InstallerRelease.Payload.localApplication` — no
+        /// download, and no separate assembly/install step, since the app is
+        /// already fully assembled in `/Applications`.
+        case local
+        /// `InstallerRelease.Payload.installAssistant` is downloaded,
+        /// digest-checked, then assembled with `installer` (which is the
+        /// first of the two `sudo` prompts this path actually triggers — see
+        /// `InstallAssistantAssembler`).
+        case needsDownload
     }
 
     private static func before(installerName: String) -> [GuidanceSection] {
@@ -76,18 +101,10 @@ public enum GuidanceCatalog {
         ]
     }
 
-    private static func during(driveName: String?) -> [GuidanceSection] {
+    private static func during(driveName: String?, payload: DuringPayloadKind) -> [GuidanceSection] {
         let drive = driveName ?? "your drive"
         return [
-            GuidanceSection(
-                heading: "What happens now",
-                steps: [
-                    "The installer downloads from Apple (this is the slow part)",
-                    "The download is checked to make sure it arrived intact",
-                    "The installer app is installed — macOS asks for your password here, see the note below",
-                    "\(drive) is erased and the installer is written to it",
-                ]
-            ),
+            GuidanceSection(heading: "What happens now", steps: duringSteps(for: payload, drive: drive)),
             GuidanceSection(
                 heading: "Two things that look like problems but aren't",
                 body: [
@@ -100,6 +117,35 @@ public enum GuidanceCatalog {
         ]
     }
 
+    /// Pinned to the real sequence for each payload kind — see
+    /// `InstallerPreparer.prepare` for `.needsDownload` (download →
+    /// `verifyDigestIfPresent` → `downloadAndAssemble`, which is where
+    /// `InstallAssistantAssembler` invokes `sudo` for the first time and a
+    /// password prompt actually appears) and `.local` (the release's payload
+    /// is returned unchanged, with neither a download nor a separate assembly
+    /// step). Both kinds still end in a write, and `InstallMediaWriter.write`
+    /// calls `sudo -v` immediately before that write runs regardless of kind
+    /// — a second, independent password moment that `.needsDownload` was
+    /// previously the only path ever mentioned losing.
+    private static func duringSteps(for payload: DuringPayloadKind, drive: String) -> [String] {
+        switch payload {
+        case .local:
+            return [
+                "The installer app already on this Mac is used directly — nothing is downloaded",
+                "\(drive) is erased and the installer is written to it — "
+                    + "macOS asks for your password here, see the note below",
+            ]
+        case .needsDownload:
+            return [
+                "The installer downloads from Apple (this is the slow part)",
+                "The download is checked to make sure it arrived intact",
+                "The installer app is installed — macOS asks for your password here, see the note below",
+                "\(drive) is erased and the installer is written to it — "
+                    + "macOS may ask for your password again here",
+            ]
+        }
+    }
+
     private static func after(
         target: TargetMac,
         installerName: String
@@ -109,9 +155,16 @@ public enum GuidanceCatalog {
         let volume = "Install \(installerName)"
         let securitySection = target.requiresStartupSecurityUtility ? [startupSecuritySection()] : []
 
-        return [readySection(volume: volume), bootSection(target: target, volume: volume)]
+        // Security BEFORE boot, not after: a T2 Mac is guaranteed not to
+        // list the drive until Startup Security Utility is changed, and
+        // `bootSection`'s own steps state selecting the drive as a certainty
+        // ("Select \"\(volume)\" and press Return"), not a maybe. Printing
+        // that certainty before the one section that explains why it might
+        // not hold yet told a T2 user to do something the next section
+        // admitted they couldn't — this order states the precondition first.
+        return [readySection(volume: volume)]
             + securitySection
-            + [troubleshootingSection()]
+            + [bootSection(target: target, volume: volume), troubleshootingSection()]
     }
 
     private static func readySection(volume: String) -> GuidanceSection {
@@ -159,7 +212,12 @@ public enum GuidanceCatalog {
                     + "until you allow it.",
             ],
             steps: [
-                "If the drive doesn't appear, hold Command-R at startup instead",
+                // An instruction, not a fallback: this section now runs
+                // BEFORE "Starting up from the drive" (see `after(target:installerName:)`),
+                // so a T2 Mac has not yet had a chance to show the drive when
+                // this step runs — "if it doesn't appear" would hedge a thing
+                // that, for this target, is certain.
+                "Hold Command-R at startup to reach Startup Security Utility",
                 "From the menu bar choose Utilities, then Startup Security Utility",
                 "If asked to unlock it, select a user and enter that Mac's administrator password",
                 "Set \"Allow booting from external or removable media\"",

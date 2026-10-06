@@ -29,7 +29,7 @@ func retryMessageDoesNotLeakRawSwiftSyntax() throws {
     #expect(leaked == nil, "retry message leaks raw Swift syntax '\(leaked ?? "")': \(message)")
 }
 
-@Test("retry message keeps the attempt number and wait, and names the real cause")
+@Test("retry message keeps the attempt number and wait, and names a human cause without leaking curl's raw message")
 func retryMessageKeepsAttemptAndWaitAndCause() {
     let message = retryMessage(
         attempt: 2,
@@ -39,7 +39,14 @@ func retryMessageKeepsAttemptAndWaitAndCause() {
 
     #expect(message.contains("attempt 2"))
     #expect(message.contains("2.0 seconds") || message.contains("retrying in 2"))
-    #expect(message.contains("curl exited 7: Could not resolve host"))
+    // I6 of the final fix round moved `DownloadError.transferFailed`'s raw
+    // curl message out of `explanation.whatHappened` and into
+    // `technicalDetail` only (matching the standard
+    // `MediaWriteError.writeToolDidNotLaunch` already set) — `retryMessage`
+    // reads `whatHappened`, so a retry notice now names the human cause
+    // `DownloadError` states for itself, never curl's raw stderr.
+    #expect(message.contains("The download of the installer failed"))
+    #expect(message.contains("curl exited 7: Could not resolve host") == false)
 }
 
 @Test("retry message falls back to a generic cause for an error that isn't Explainable")

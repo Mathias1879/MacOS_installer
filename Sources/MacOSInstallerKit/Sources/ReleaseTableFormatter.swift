@@ -27,6 +27,7 @@ public enum ReleaseTableFormatter {
                     + pad(release.build, buildWidth) + "  "
                     + pad(release.displaySize, 9) + "  "
                     + describe(release.origin)
+                    + unusableNote(for: release)
             )
         }
 
@@ -38,6 +39,22 @@ public enum ReleaseTableFormatter {
         case .local: return "on disk"
         case .sucatalog: return "Apple catalog"
         case .softwareUpdate: return "Software Update"
+        }
+    }
+
+    /// `InstallerPreparer.assertUsable`/`prepare` reject `.legacyESD` and
+    /// `.softwareUpdate` payloads outright (see C3 of the final fix round),
+    /// so a listing that offered them with no indication would let the user
+    /// pick one, read the Before stage, and type their drive's name to
+    /// confirm an erase before ever learning the release can't be used.
+    private static func unusableNote(for release: InstallerRelease) -> String {
+        switch release.payload {
+        case .softwareUpdate:
+            return "  (cannot be used directly — run `softwareupdate --fetch-full-installer` first)"
+        case .legacyESD:
+            return "  (not supported yet)"
+        case .installAssistant, .localApplication:
+            return ""
         }
     }
 

@@ -6,12 +6,17 @@ import Testing
 /// is raised from `InstallAssistantAssembler.swift:38/46`, entirely before
 /// `InstallMediaWriter` is ever constructed, so every case can truthfully say
 /// the drive was not touched.
-@Test("an assembly failure states plainly that the drive was not touched")
+@Test("an assembly failure states plainly that the drive was not touched, without leaking installer's raw stderr")
 func assemblyFailureStatesDriveNotTouched() {
-    let rendered = AssemblyError.installerFailed(exitCode: 1, message: "installer: failed").explanation.rendered()
+    let error = AssemblyError.installerFailed(exitCode: 1, message: "installer: failed")
+    let rendered = error.explanation.rendered()
 
     #expect(rendered.contains("The drive was not touched"))
-    #expect(rendered.contains("installer: failed"))
+    // I6 of the final fix round: row 23 of the manual-verification checklist
+    // requires the terminal message not contain raw technical detail. This
+    // payload now reaches only `technicalDetail` (asserted below).
+    #expect(rendered.contains("installer: failed") == false)
+    #expect(error.technicalDetail.contains("installer: failed"))
 }
 
 @Test("an application-not-found assembly failure states plainly that the drive was not touched")

@@ -92,3 +92,39 @@ func uniqueMatchCarriesItsWarningVerdict() {
     }
     #expect(found.verdict == .selectableWithWarning("looks like a backup"))
 }
+
+// MARK: - I1: a named-but-refused volume's reason is still reachable
+
+/// `resolve` itself must keep returning `.none` for a refused volume — that
+/// is the safety property `refusedVolumeIsNeverOffered` above pins — but a
+/// caller handling `.none` needs a way to tell "no match exists at all" apart
+/// from "that volume was found and refused, and here is why", or a user who
+/// typed the EXACT name of a drive this tool rejected sees the same generic
+/// listing as someone who mistyped a name that matches nothing.
+@Test("refusalReason finds the exact reason for a refused volume matched by name")
+func refusalReasonFindsExactNameMatch() {
+    let decisions = [vol("disk3s1", "Macintosh HD", verdict: .refused(.internalDisk), internalDisk: true)]
+
+    #expect(VolumeTargetResolver.refusalReason(forExactMatch: "Macintosh HD", among: decisions) == .internalDisk)
+}
+
+@Test("refusalReason finds the exact reason for a refused volume matched by device identifier")
+func refusalReasonFindsExactDeviceIdentifierMatch() {
+    let decisions = [vol("disk3s1", "Macintosh HD", verdict: .refused(.internalDisk), internalDisk: true)]
+
+    #expect(VolumeTargetResolver.refusalReason(forExactMatch: "disk3s1", among: decisions) == .internalDisk)
+}
+
+@Test("refusalReason returns nil when no volume, refused or otherwise, matches the query")
+func refusalReasonReturnsNilForNoMatch() {
+    let decisions = [vol("disk5s1", "SanDisk Ultra")]
+
+    #expect(VolumeTargetResolver.refusalReason(forExactMatch: "Nonexistent", among: decisions) == nil)
+}
+
+@Test("refusalReason returns nil for a volume that is selectable, not refused")
+func refusalReasonReturnsNilForSelectableVolume() {
+    let decisions = [vol("disk5s1", "SanDisk Ultra")]
+
+    #expect(VolumeTargetResolver.refusalReason(forExactMatch: "SanDisk Ultra", among: decisions) == nil)
+}

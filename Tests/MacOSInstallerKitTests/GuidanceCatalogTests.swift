@@ -59,38 +59,76 @@ func noStageClaimsInternetIsRequired() {
     }
 }
 
-@Test("the during stage pre-announces the invisible password and the permission dialog")
+@Test("the during stage pre-announces the invisible password and the permission dialog, for every payload kind")
 func duringStagePreAnnouncesSurprises() {
-    let sections = GuidanceCatalog.sections(
-        for: .during, target: .appleSilicon, installerName: "macOS Tahoe", originalDriveName: "SanDisk Ultra"
-    )
-    let all = sections.flatMap { [$0.heading] + $0.body + $0.steps }.joined(separator: "\n").lowercased()
+    for payload in [GuidanceCatalog.DuringPayloadKind.local, .needsDownload] {
+        exhaustivelyCheckDuringPayloadKind(payload)
 
-    // Apple documents both. Announcing them afterwards is useless — the point
-    // is that the user is not surprised.
-    #expect(all.contains("no characters") || all.contains("nothing appear"))
-    #expect(all.contains("removable volume") || all.contains("permission"))
+        let sections = GuidanceCatalog.sections(
+            for: .during, target: .appleSilicon, installerName: "macOS Tahoe",
+            originalDriveName: "SanDisk Ultra", payload: payload
+        )
+        let all = sections.flatMap { [$0.heading] + $0.body + $0.steps }.joined(separator: "\n").lowercased()
+
+        // Apple documents both. Announcing them afterwards is useless — the
+        // point is that the user is not surprised.
+        #expect(all.contains("no characters") || all.contains("nothing appear"))
+        #expect(all.contains("removable volume") || all.contains("permission"))
+    }
 }
 
-@Test("the during stage lists its steps in the order they actually happen")
-func duringStageStepsMatchRealOrder() {
-    let sections = GuidanceCatalog.sections(
-        for: .during, target: .appleSilicon, installerName: "macOS Tahoe", originalDriveName: "SanDisk Ultra"
-    )
-    let steps = sections.first { $0.heading == "What happens now" }?.steps
+/// C2 of the final fix round: the During stage used to show one static step
+/// list regardless of how the release was actually obtained, so any Mac that
+/// already held a local installer app (every Mac that has run this tool
+/// once — `installer` leaves the app in `/Applications`) read three steps
+/// that never happen, and the one path that DID show a download still never
+/// mentioned the second `sudo` prompt (`InstallMediaWriter`'s `sudo -v`,
+/// immediately before the write, on every path).
+///
+/// One case per `DuringPayloadKind`, each asserted as an exact array — a
+/// shape-only "password text is present" assertion would not catch a step
+/// being wrong, missing, or in the wrong position, which is exactly the
+/// defect this test exists to pin.
+@Test("the during stage lists only the steps that actually run, for each payload kind")
+func duringStageStepsMatchRealOrderPerPayloadKind() {
+    for payload in [GuidanceCatalog.DuringPayloadKind.local, .needsDownload] {
+        exhaustivelyCheckDuringPayloadKind(payload)
 
-    // Pinned to the real sequence: download (InstallerPreparer.swift),
-    // digest check, then assembly — where `InstallAssistantAssembler.swift`
-    // invokes `sudo` for the first time and the password prompt actually
-    // appears — then the write. A shape-only "password text is present"
-    // assertion would not catch the password step being in the wrong
-    // position, which is exactly the defect this test exists to pin.
-    #expect(steps == [
-        "The installer downloads from Apple (this is the slow part)",
-        "The download is checked to make sure it arrived intact",
-        "The installer app is installed — macOS asks for your password here, see the note below",
-        "SanDisk Ultra is erased and the installer is written to it",
-    ])
+        let sections = GuidanceCatalog.sections(
+            for: .during, target: .appleSilicon, installerName: "macOS Tahoe",
+            originalDriveName: "SanDisk Ultra", payload: payload
+        )
+        let steps = sections.first { $0.heading == "What happens now" }?.steps
+
+        #expect(steps == expectedDuringSteps(for: payload))
+    }
+}
+
+/// `InstallerPreparer.prepare` returns a `.localApplication` payload
+/// unchanged — no download, no separate assembly/install step — so that
+/// kind's only password moment is the write itself
+/// (`InstallMediaWriter.write`'s `sudo -v`). `.needsDownload` goes through
+/// `InstallerPreparer.downloadAndAssemble`: download, digest check, then
+/// `InstallAssistantAssembler` (the FIRST `sudo`), and still ends at the same
+/// write (the SECOND `sudo`) — so, unlike the old single-shape test, this
+/// path's steps must mention both password moments, not just one.
+private func expectedDuringSteps(for payload: GuidanceCatalog.DuringPayloadKind) -> [String] {
+    switch payload {
+    case .local:
+        return [
+            "The installer app already on this Mac is used directly — nothing is downloaded",
+            "SanDisk Ultra is erased and the installer is written to it — "
+                + "macOS asks for your password here, see the note below",
+        ]
+    case .needsDownload:
+        return [
+            "The installer downloads from Apple (this is the slow part)",
+            "The download is checked to make sure it arrived intact",
+            "The installer app is installed — macOS asks for your password here, see the note below",
+            "SanDisk Ultra is erased and the installer is written to it — "
+                + "macOS may ask for your password again here",
+        ]
+    }
 }
 
 @Test("the after stage gives only the selected target's boot method")
@@ -124,6 +162,61 @@ func afterStageIncludesT2Caveat() {
     #expect(afterText(.intelT2).contains("Startup Security Utility"))
     #expect(afterText(.appleSilicon).contains("Startup Security Utility") == false)
     #expect(afterText(.intelPreT2).contains("Startup Security Utility") == false)
+}
+
+/// I3 of the final fix round: the Startup Security Utility section used to
+/// run AFTER "Starting up from the drive", so a T2 user read "Select
+/// \"Install macOS X\" and press Return" — stated as certain — for a drive
+/// the very next section said is guaranteed not to be listed until Startup
+/// Security Utility is changed. Pinned as an exact array of headings, per
+/// target, so a future reorder (in either direction) fails here rather than
+/// only being caught by the substring checks `afterStageIncludesT2Caveat`
+/// already runs.
+@Test("the after stage's sections run in a fixed order per target, security before boot")
+func afterStageSectionOrderIsExactPerTarget() {
+    TargetMac.allCases.forEach(exhaustivelyCheckTargetMac)
+
+    func headings(_ target: TargetMac) -> [String] {
+        GuidanceCatalog.sections(
+            for: .after, target: target, installerName: "macOS Tahoe", originalDriveName: "SanDisk Ultra"
+        ).map(\.heading)
+    }
+
+    #expect(headings(.appleSilicon) == [
+        "Your installer is ready",
+        "Starting up from the drive",
+        "If something goes wrong",
+    ])
+    #expect(headings(.intelPreT2) == [
+        "Your installer is ready",
+        "Starting up from the drive",
+        "If something goes wrong",
+    ])
+    // The only target with the extra section — and it runs BEFORE "Starting
+    // up from the drive", not after: see the comment on this ordering in
+    // `GuidanceCatalog.after(target:installerName:)`.
+    #expect(headings(.intelT2) == [
+        "Your installer is ready",
+        "One extra step for your Mac",
+        "Starting up from the drive",
+        "If something goes wrong",
+    ])
+}
+
+/// The hedge this test exists to kill: "If the drive doesn't appear, hold
+/// Command-R at startup instead" implied the user should try the normal boot
+/// method FIRST — but the Startup Security Utility section now runs before
+/// "Starting up from the drive" ever does, so for a T2 Mac the drive is
+/// certain not to be visible yet, not merely possibly absent.
+@Test("the Startup Security Utility section's first step is stated as an instruction, not a fallback")
+func startupSecurityFirstStepIsNotHedged() {
+    let all = GuidanceCatalog.sections(
+        for: .after, target: .intelT2, installerName: "macOS Tahoe", originalDriveName: "SanDisk Ultra"
+    )
+    let steps = all.first { $0.heading == "One extra step for your Mac" }?.steps
+
+    #expect(steps?.first == "Hold Command-R at startup to reach Startup Security Utility")
+    #expect(steps?.first?.lowercased().contains("if the drive doesn't appear") == false)
 }
 
 @Test("the Startup Security Utility step warns that it may ask for the administrator password")
@@ -219,5 +312,12 @@ private func exhaustivelyCheckTargetMac(_ target: TargetMac) {
     case .appleSilicon: break
     case .intelT2: break
     case .intelPreT2: break
+    }
+}
+
+private func exhaustivelyCheckDuringPayloadKind(_ payload: GuidanceCatalog.DuringPayloadKind) {
+    switch payload {
+    case .local: break
+    case .needsDownload: break
     }
 }

@@ -66,12 +66,29 @@ public struct InstructionExporter {
 
     /// Includes `target` so exporting for a second Mac from the same download
     /// cannot silently overwrite the first Mac's file — only re-running for
-    /// the SAME installer AND the SAME target should overwrite. `target.rawValue`
-    /// is filename-safe on its own (it is a Swift identifier: no slashes, no
-    /// control characters), so it needs no sanitising. `fileNameSafeInstallerName`
-    /// is already sanitised by the caller (`export`'s `Self.sanitised(installerName)`).
+    /// the SAME installer AND the SAME target should overwrite. `slug(for:)`
+    /// is a short, human-readable name per case rather than the raw enum case
+    /// name (I5 of the final fix round: `target.rawValue` produced names like
+    /// "(intelPreT2)" sitting right under a first line that already spells out
+    /// the same Mac in words — "This file is for: An Intel Mac without a T2
+    /// security chip"). Each case's slug is distinct, which is all the
+    /// collision-avoidance above actually requires; it needs no further
+    /// sanitising, since none of the three contains a slash or a control
+    /// character. `fileNameSafeInstallerName` is already sanitised by the
+    /// caller (`export`'s `Self.sanitised(installerName)`).
     private static func fileName(for fileNameSafeInstallerName: String, target: TargetMac) -> String {
-        "How to use your \(fileNameSafeInstallerName) installer (\(target.rawValue)).md"
+        "How to use your \(fileNameSafeInstallerName) installer (\(slug(for: target))).md"
+    }
+
+    /// A short slug per `TargetMac` case for use in a filename — see
+    /// `fileName(for:target:)`. Exhaustive, with no `default`, so a new
+    /// `TargetMac` case fails this file to compile until it has one.
+    private static func slug(for target: TargetMac) -> String {
+        switch target {
+        case .appleSilicon: return "Apple silicon"
+        case .intelT2: return "Intel with T2"
+        case .intelPreT2: return "Intel without T2"
+        }
     }
 
     /// Builds the Markdown body by mapping each section to its own block of

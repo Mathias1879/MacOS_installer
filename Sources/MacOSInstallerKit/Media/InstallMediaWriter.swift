@@ -39,12 +39,18 @@ public struct InstallMediaWriter {
         self.runner = runner
     }
 
+    /// Returns the volume as re-resolved AFTER a successful write, so the
+    /// caller can report the name actually observed rather than assuming
+    /// success renamed it to whatever was expected — the code-side check for
+    /// manual-verification row 15. `@discardableResult` because most of this
+    /// type's own tests only care that `write` didn't throw.
+    @discardableResult
     public func write(
         installerApp: URL,
         toVolumeWithUUID uuid: String,
         expectedDeviceIdentifier: String,
         progress: @Sendable (String) -> Void
-    ) throws {
+    ) throws -> Volume? {
         let tool = installerApp
             .appendingPathComponent("Contents/Resources/createinstallmedia")
             .path
@@ -63,6 +69,15 @@ public struct InstallMediaWriter {
         // volume mounted at the same path — while the prompt is up. This
         // machine already has two volumes named "Untitled", so a same-name,
         // same-path remount during that wait is not a hypothetical.
+        // Announced before sudo is ever invoked: on the `.localApplication`
+        // path this is the ONLY password prompt the whole run produces, and
+        // on the downloaded path it is the SECOND one (`InstallAssistantAssembler`
+        // raises the first). Sudo's default `timestamp_timeout` is 5 minutes
+        // and assembling an ~18 GB package routinely exceeds it, so this
+        // second prompt is common, not an edge case — no path may reach it
+        // with nothing printed immediately beforehand.
+        progress("Writing the installer needs your password…")
+
         // Wrapped rather than a bare `try`: a launch failure here (e.g. sudo
         // missing from PATH) would otherwise surface as a raw `CommandError`
         // instead of `MediaWriteError`, which is the one type callers catch
@@ -156,6 +171,19 @@ public struct InstallMediaWriter {
                 message: message
             )
         }
+
+        // `createinstallmedia` exiting zero means the command reported
+        // success — not that this tool has observed the result. The erase
+        // formats the destination's filesystem, which typically assigns it a
+        // new `VolumeUUID`, so `uuid` (confirmed above, before the write) is
+        // not guaranteed to resolve anything now. `expectedDeviceIdentifier`
+        // names the partition slot rather than the filesystem instance and
+        // survives the reformat, so this re-resolves by that instead, through
+        // the same `diskutil info -plist` path used above. `nil` means the
+        // exit code reported success but the volume could not be read back
+        // afterward — the caller must not report a confident name in that
+        // case; see `CreateCommand.reportWriteOutcome`.
+        return try? resolve(uuid: expectedDeviceIdentifier)
     }
 
     private func resolve(uuid: String) throws -> Volume {

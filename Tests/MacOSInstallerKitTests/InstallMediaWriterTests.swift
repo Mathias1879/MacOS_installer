@@ -6,14 +6,14 @@ private let diskutilPath = "/usr/sbin/diskutil"
 private let sudoPath = "/usr/bin/sudo"
 private let targetUUID = "9662C8FB-5D1F-4744-81E0-618FBC801198"
 
-private func infoPlist(id: String, mount: String, uuid: String = targetUUID) -> String {
+private func infoPlist(id: String, mount: String, uuid: String = targetUUID, name: String = "SanDisk Ultra") -> String {
     """
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
     <plist version="1.0">
     <dict>
       <key>DeviceIdentifier</key><string>\(id)</string>
-      <key>VolumeName</key><string>SanDisk Ultra</string>
+      <key>VolumeName</key><string>\(name)</string>
       <key>VolumeUUID</key><string>\(uuid)</string>
       <key>MountPoint</key><string>\(mount)</string>
       <key>Internal</key><false/>
@@ -55,6 +55,20 @@ private func stubSuccessfulAuthentication(on runner: FakeCommandRunner) {
     runner.stub(standardOutput: "", for: "\(sudoPath) -v")
 }
 
+/// Stubs the post-write re-resolution `InstallMediaWriter.write` performs
+/// (C4) once `createinstallmedia` has exited zero — `diskutil info -plist
+/// <expectedDeviceIdentifier>`, keyed by device identifier rather than by
+/// `targetUUID`, since that is what the write re-resolves by after the erase.
+/// A test that omits this stub still passes `write` itself (the fake's
+/// unstubbed response is a non-zero exit, which `try?` turns into `nil`
+/// rather than a thrown error) but gets `nil` back instead of a `Volume`.
+private func stubPostWriteResolution(on runner: FakeCommandRunner, deviceIdentifier: String, volumeName: String) {
+    runner.stub(
+        standardOutput: infoPlist(id: deviceIdentifier, mount: "/Volumes/\(volumeName)", name: volumeName),
+        for: "\(diskutilPath) info -plist \(deviceIdentifier)"
+    )
+}
+
 /// Thread-safe collector for progress messages. `progress` is `@Sendable`, so
 /// a plain captured `var` cannot be mutated from inside it; this mirrors
 /// FakeCommandRunner's own lock-protected, `@unchecked Sendable` style.
@@ -81,19 +95,22 @@ func resolvesThenWrites() throws {
                 for: "\(diskutilPath) info -plist \(targetUUID)")
     runner.stub(standardOutput: "Install media now available at /Volumes/Install macOS Tahoe",
                 for: "\(sudoPath) \(createInstallMedia) --volume /Volumes/SanDisk Ultra --nointeraction")
+    stubPostWriteResolution(on: runner, deviceIdentifier: "disk5s1", volumeName: "Install macOS Tahoe")
 
     try InstallMediaWriter(runner: runner).write(
         installerApp: app, toVolumeWithUUID: targetUUID,
         expectedDeviceIdentifier: "disk5s1", progress: { _ in }
     )
 
-    // Authentication, then resolution, then the erase — never any other order.
-    #expect(runner.invocations.count == 3)
+    // Authentication, pre-erase resolution, the erase, then the post-erase
+    // re-resolution (C4) — never any other order.
+    #expect(runner.invocations.count == 4)
     #expect(runner.invocations[0].executable == sudoPath)
     #expect(runner.invocations[0].arguments == ["-v"])
     #expect(runner.invocations[1].arguments == ["info", "-plist", targetUUID])
     #expect(runner.invocations[2].executable == sudoPath)
     #expect(runner.invocations[2].arguments == [createInstallMedia, "--volume", "/Volumes/SanDisk Ultra", "--nointeraction"])
+    #expect(runner.invocations[3].arguments == ["info", "-plist", "disk5s1"])
 }
 
 @Test("authenticates with sudo before re-resolving the target")
@@ -104,6 +121,7 @@ func authenticatesBeforeResolving() throws {
                 for: "\(diskutilPath) info -plist \(targetUUID)")
     runner.stub(standardOutput: "ok",
                 for: "\(sudoPath) \(createInstallMedia) --volume /Volumes/SanDisk Ultra --nointeraction")
+    stubPostWriteResolution(on: runner, deviceIdentifier: "disk5s1", volumeName: "Install macOS Tahoe")
 
     try InstallMediaWriter(runner: runner).write(
         installerApp: app, toVolumeWithUUID: targetUUID,
@@ -194,6 +212,114 @@ func callsProgressBeforeErasing() throws {
 
     #expect(!collector.messages.isEmpty)
     #expect(collector.messages.allSatisfy { !$0.isEmpty })
+}
+
+/// C2 (second half) of the final fix round: `sudo -v` here is a SECOND,
+/// independent password prompt — `InstallAssistantAssembler` raises the
+/// first, for a downloaded release, but every release reaches this `sudo -v`
+/// regardless of how it was obtained. Sudo's default `timestamp_timeout` is
+/// 5 minutes and an ~18 GB install routinely exceeds it, so this prompt
+/// commonly appears with nothing printed in front of it. This pins that a
+/// progress line is emitted before `sudo -v` is ever invoked.
+@Test("announces that a password is needed before the sudo -v authentication check runs")
+func announcesPasswordNeedBeforeSudoDashV() throws {
+    let runner = FakeCommandRunner()
+    stubSuccessfulAuthentication(on: runner)
+    runner.stub(standardOutput: infoPlist(id: "disk5s1", mount: "/Volumes/SanDisk Ultra"),
+                for: "\(diskutilPath) info -plist \(targetUUID)")
+    runner.stub(standardOutput: "ok",
+                for: "\(sudoPath) \(createInstallMedia) --volume /Volumes/SanDisk Ultra --nointeraction")
+
+    let collector = MessageCollector()
+    try InstallMediaWriter(runner: runner).write(
+        installerApp: app, toVolumeWithUUID: targetUUID,
+        expectedDeviceIdentifier: "disk5s1", progress: { collector.record($0) }
+    )
+
+    // The first progress message, printed before `write` has issued a single
+    // command, must be the password announcement — not the later "erasing…"
+    // message, which `callsProgressBeforeErasing` above already covers.
+    #expect(collector.messages.first == "Writing the installer needs your password…")
+}
+
+// MARK: - C4: success is observed, not just asserted from an exit code
+
+/// `write` re-resolves by `expectedDeviceIdentifier`, not by `uuid` — the
+/// erase gives the destination a new filesystem, which typically assigns it a
+/// new `VolumeUUID`, so the pre-erase UUID is not a safe thing to resolve by
+/// afterward. This pins that the device-identifier lookup is what actually
+/// happens, and that its result — not an assumption from `exitCode == 0` — is
+/// what `write` returns.
+@Test("returns the volume actually observed after a successful write, re-resolved by device identifier")
+func returnsObservedVolumeAfterSuccessfulWrite() throws {
+    let runner = FakeCommandRunner()
+    stubSuccessfulAuthentication(on: runner)
+    runner.stub(standardOutput: infoPlist(id: "disk5s1", mount: "/Volumes/SanDisk Ultra"),
+                for: "\(diskutilPath) info -plist \(targetUUID)")
+    runner.stub(standardOutput: "ok",
+                for: "\(sudoPath) \(createInstallMedia) --volume /Volumes/SanDisk Ultra --nointeraction")
+    stubPostWriteResolution(on: runner, deviceIdentifier: "disk5s1", volumeName: "Install macOS Tahoe")
+
+    let observed = try InstallMediaWriter(runner: runner).write(
+        installerApp: app, toVolumeWithUUID: targetUUID,
+        expectedDeviceIdentifier: "disk5s1", progress: { _ in }
+    )
+
+    #expect(observed?.volumeName == "Install macOS Tahoe")
+    #expect(observed?.deviceIdentifier == "disk5s1")
+}
+
+/// The exact scenario C4 exists for: `createinstallmedia` can exit zero while
+/// naming the result something other than what the catalog's release name
+/// would predict (e.g. Apple changes its own naming convention, or a
+/// pre-existing differently-named volume at that mount point was reused). The
+/// VALUE returned must be the real, differing name — not the expected one —
+/// so the caller can say so plainly instead of claiming success under a name
+/// that isn't real.
+@Test("returns the volume's real name even when it differs from what the release name would predict")
+func returnsRealNameEvenWhenItDiffersFromExpectation() throws {
+    let runner = FakeCommandRunner()
+    stubSuccessfulAuthentication(on: runner)
+    runner.stub(standardOutput: infoPlist(id: "disk5s1", mount: "/Volumes/SanDisk Ultra"),
+                for: "\(diskutilPath) info -plist \(targetUUID)")
+    runner.stub(standardOutput: "ok",
+                for: "\(sudoPath) \(createInstallMedia) --volume /Volumes/SanDisk Ultra --nointeraction")
+    // Apple's real output, not "Install macOS Tahoe" — the name a caller
+    // might otherwise have assumed from the release alone.
+    stubPostWriteResolution(on: runner, deviceIdentifier: "disk5s1", volumeName: "Install macOS Tahoe Beta")
+
+    let observed = try InstallMediaWriter(runner: runner).write(
+        installerApp: app, toVolumeWithUUID: targetUUID,
+        expectedDeviceIdentifier: "disk5s1", progress: { _ in }
+    )
+
+    #expect(observed?.volumeName == "Install macOS Tahoe Beta")
+}
+
+/// `createinstallmedia` exiting zero is not the same fact as this tool having
+/// observed the result — if the post-write lookup itself fails (the fake's
+/// unstubbed response here, a non-zero `diskutil info` exit), `write` must
+/// return `nil` rather than throw: the write itself genuinely succeeded, so
+/// turning an unconfirmable name into a thrown error would misreport a
+/// working installer as a failed run.
+@Test("returns nil, without throwing, when the volume cannot be re-resolved after a successful write")
+func returnsNilWhenPostWriteResolutionFails() throws {
+    let runner = FakeCommandRunner()
+    stubSuccessfulAuthentication(on: runner)
+    runner.stub(standardOutput: infoPlist(id: "disk5s1", mount: "/Volumes/SanDisk Ultra"),
+                for: "\(diskutilPath) info -plist \(targetUUID)")
+    runner.stub(standardOutput: "ok",
+                for: "\(sudoPath) \(createInstallMedia) --volume /Volumes/SanDisk Ultra --nointeraction")
+    // Deliberately no stub for "diskutil info -plist disk5s1": the fake's
+    // unstubbed response is a non-zero exit, standing in for a drive that
+    // disappeared or failed to remount in the instant right after the erase.
+
+    let observed = try InstallMediaWriter(runner: runner).write(
+        installerApp: app, toVolumeWithUUID: targetUUID,
+        expectedDeviceIdentifier: "disk5s1", progress: { _ in }
+    )
+
+    #expect(observed == nil)
 }
 
 @Test("aborts without erasing when the target has moved to a different device node")

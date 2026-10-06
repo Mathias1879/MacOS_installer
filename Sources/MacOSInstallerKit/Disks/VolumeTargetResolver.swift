@@ -57,4 +57,28 @@ public enum VolumeTargetResolver {
         if case .refused = verdict { return false }
         return true
     }
+
+    /// Finds a REFUSED decision whose volume exactly matches `query` by
+    /// display name or device identifier, so a caller that got `.none` back
+    /// from `resolve` can tell the difference between "no volume matches that
+    /// name at all" and "that volume was found and refused, and here is why."
+    ///
+    /// `resolve` itself must keep excluding refused volumes from matching —
+    /// that is the whole point of `isSelectable` — so this is a second,
+    /// separate lookup, not a change to `resolve`'s own behaviour. Without
+    /// it, `CreateCommand`'s `.none` branch could only ever show the generic
+    /// listing, even when the named drive was found and refused for a
+    /// specific, nameable reason (see `VolumeGuard.RefusalReason.explanation`).
+    public static func refusalReason(
+        forExactMatch query: String,
+        among decisions: [VolumeGuard.VolumeDecision]
+    ) -> VolumeGuard.RefusalReason? {
+        for decision in decisions {
+            guard case .refused(let reason) = decision.verdict else { continue }
+            if decision.volume.deviceIdentifier == query || decision.volume.displayName == query {
+                return reason
+            }
+        }
+        return nil
+    }
 }

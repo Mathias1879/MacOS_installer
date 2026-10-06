@@ -11,13 +11,19 @@ public enum DownloadError: Error, Equatable {
 /// say the drive was not touched, and must say so explicitly, because by the
 /// time this runs the user has already confirmed the erase.
 extension DownloadError: Explainable {
+    // `.sizeMismatch` and `.transferFailed` deliberately do not bind their
+    // raw payloads here (I6 of the final fix round) — matching the standard
+    // `MediaWriteError.writeToolDidNotLaunch` and `.authenticationFailed`
+    // already set: a byte count, a cache path, or curl's raw message reads as
+    // a crash dump to someone who has never opened Terminal, not a sentence
+    // written for them. Both payloads still reach `technicalDetail` below, in
+    // full, which is the only place they belong.
     public var explanation: UserFacingError {
         switch self {
-        case .sizeMismatch(let expected, let actual, let path):
+        case .sizeMismatch:
             return UserFacingError(
                 title: "The download didn't finish correctly",
-                whatHappened: "The downloaded file is the wrong size: expected \(expected) bytes but got "
-                    + "\(actual) at \(path). The drive was not touched.",
+                whatHappened: "The downloaded installer arrived as the wrong size. The drive was not touched.",
                 whatItMeans: "The file has been deleted, so it will be downloaded again next time "
                     + "rather than reused.",
                 whatToDoNext: [
@@ -26,10 +32,10 @@ extension DownloadError: Explainable {
                 ]
             )
 
-        case .transferFailed(let message):
+        case .transferFailed:
             return UserFacingError(
                 title: "The download failed",
-                whatHappened: "The download of the installer failed: \(message). The drive was not touched.",
+                whatHappened: "The download of the installer failed. The drive was not touched.",
                 whatItMeans: "This is usually a dropped network connection rather than a problem with "
                     + "your drive.",
                 whatToDoNext: [

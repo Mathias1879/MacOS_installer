@@ -38,8 +38,11 @@ public enum VolumeGuard {
 
         /// A three-part explanation alongside `userMessage`. `userMessage`
         /// stays a single line for `VolumeTableFormatter`'s listing, which is
-        /// a table cell, not an error report; this is what prints when a
-        /// targeted `--volume` is refused outright.
+        /// a table cell, not an error report; this is what `CreateCommand`
+        /// prints when a targeted `--volume` matches a refused volume by name
+        /// or device identifier — see `VolumeTargetResolver.refusalReason(forExactMatch:among:)`,
+        /// which `CreateCommand`'s `.none` branch calls before falling back to
+        /// the generic listing.
         public var explanation: UserFacingError {
             switch self {
             case .internalDisk:

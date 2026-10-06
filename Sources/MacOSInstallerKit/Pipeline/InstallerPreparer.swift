@@ -71,6 +71,31 @@ extension InstallerPreparationError: Explainable {
 /// by tests — the executable target is reserved for argument parsing, prompts,
 /// printing and wiring, and is excluded from coverage.
 public struct InstallerPreparer {
+    /// Rejects a release whose payload `prepare` cannot use, before any
+    /// irreversible step — `CreateCommand`'s typed erase confirmation
+    /// included — is ever reached.
+    ///
+    /// `prepare`'s own `switch` throws the identical errors for the identical
+    /// cases, and that throw stays in place as defence in depth for any other
+    /// caller. This exists so `CreateCommand.execute()` can call it
+    /// immediately after `fetchRelease` returns — before the Before stage,
+    /// before volume enumeration, before the typed confirmation — so a
+    /// release this tool cannot use is refused before the user has done
+    /// anything irreversible. Under `--offline`, every release on offer is
+    /// `.softwareUpdate`, so without this check the entire table was a trap:
+    /// the user would type their drive's name to confirm an erase before
+    /// ever learning the release could not be fetched.
+    public static func assertUsable(_ release: InstallerRelease) throws {
+        switch release.payload {
+        case .legacyESD:
+            throw InstallerPreparationError.legacyAssemblyNotSupported
+        case .softwareUpdate(let version):
+            throw InstallerPreparationError.softwareUpdateOnly(version: version)
+        case .installAssistant, .localApplication:
+            return
+        }
+    }
+
     private let downloader: Downloader
     private let assembler: any AssemblyStrategy
     private let cacheDirectory: URL

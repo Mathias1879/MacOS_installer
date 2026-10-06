@@ -12,13 +12,18 @@ public enum AssemblyError: Error, Equatable {
 /// explicitly, because by the time this runs the user has already confirmed
 /// the erase.
 extension AssemblyError: Explainable {
+    // `.installerFailed` deliberately does not bind `exitCode` or `message`
+    // here (I6 of the final fix round) — matching the standard
+    // `MediaWriteError.writeToolDidNotLaunch` and `.authenticationFailed`
+    // already set: raw stderr from `installer` reads as a crash dump to
+    // someone who has never opened Terminal. Both payloads still reach
+    // `technicalDetail` below, in full.
     public var explanation: UserFacingError {
         switch self {
-        case .installerFailed(let exitCode, let message):
+        case .installerFailed:
             return UserFacingError(
                 title: "Installing the installer app failed",
-                whatHappened: "Assembling the installer application failed: \(message). "
-                    + "The drive was not touched.",
+                whatHappened: "Assembling the installer application failed. The drive was not touched.",
                 whatItMeans: "The `installer` tool macOS uses to unpack the downloaded package "
                     + "exited with an error before it finished.",
                 whatToDoNext: [

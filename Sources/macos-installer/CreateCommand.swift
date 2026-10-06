@@ -62,6 +62,13 @@ struct CreateCommand: AsyncParsableCommand {
         let bootVolume = try BootVolumeResolver(runner: runner).resolve()
 
         let release = try await fetchRelease(runner: runner)
+        // Before the Before stage, before volume enumeration, before the
+        // typed erase confirmation: a release `prepare` cannot use (see
+        // `InstallerPreparer.assertUsable`) is refused here, immediately
+        // after it is resolved — not after the user has already committed to
+        // an irreversible erase. Under `--offline` every offered release is
+        // `.softwareUpdate`, so without this the whole table was a trap.
+        try InstallerPreparer.assertUsable(release)
         let volumes = try enumerateVolumes(runner: runner, targetMac: targetMac, release: release)
 
         let targetDecision = try selectTarget(volumes: volumes, bootVolume: bootVolume, release: release)
@@ -114,12 +121,28 @@ struct CreateCommand: AsyncParsableCommand {
                     )
                 }
             },
+            acknowledge: Self.acknowledgeDrivePlugged,
             observe: { try DiskEnumerator(runner: runner).mountedVolumes() }
         )
         for failure in volumeResult.failures {
             warn("could not read a volume — \(failure)")
         }
         return volumeResult.volumes
+    }
+
+    /// Waits for the user to actually plug the drive in before volume
+    /// enumeration runs — the fix for C1 of the final fix round: an earlier
+    /// round reordered `announce` ahead of `observe` but left nothing between
+    /// them, so a user who read "plug the drive in" and did so immediately
+    /// still wasn't seen by the enumeration that ran in the same instant.
+    ///
+    /// Skipped on a non-TTY stdin so the non-interactive path (piped input,
+    /// CI) keeps failing closed exactly as it does today, rather than hanging
+    /// on a `readLine()` nobody can answer.
+    private static func acknowledgeDrivePlugged() {
+        guard isatty(STDIN_FILENO) != 0 else { return }
+        print("  Plug the drive in now, then press Return.", terminator: "")
+        _ = readLine()
     }
 
     /// Evaluates every mounted volume against the guard rules and resolves
@@ -190,25 +213,27 @@ struct CreateCommand: AsyncParsableCommand {
     /// very next thing that happens and this stage is what pre-announces it.
     /// The After stage runs only once `writeInstaller` has returned without
     /// throwing, since it describes a drive that is already renamed and
-    /// ready to boot from.
+    /// ready to boot from. `reportWriteOutcome` is what checks that claim
+    /// against what `writeInstaller` actually observed; the After stage and
+    /// the exported file still derive "Install \(release.name)" themselves
+    /// rather than reading `reportWriteOutcome`'s result back — a known gap
+    /// (manual-verification row 15) left for a future round, not silently
+    /// widened by this one.
     private func writeAndFinish(
         target: Volume, uuid: String, release: InstallerRelease, runner: any CommandRunner, targetMac: TargetMac?
     ) async throws {
         if let targetMac {
             WalkthroughPresenter.show(
-                .during, targetMac: targetMac, installerName: release.name, originalDriveName: target.displayName
+                .during, targetMac: targetMac, installerName: release.name,
+                originalDriveName: target.displayName, payload: Self.duringPayloadKind(for: release.payload)
             )
         }
 
         print("  Preparing \(release.name) \(release.version)…")
         let app = try await prepareInstaller(for: release, runner: runner)
 
-        try writeInstaller(app: app, to: target, uuid: uuid, runner: runner)
-
-        print(
-            "  Done. \(target.displayName) (\(target.deviceIdentifier)) is now named "
-                + "\"Install \(release.name)\"."
-        )
+        let observedVolume = try writeInstaller(app: app, to: target, uuid: uuid, runner: runner)
+        reportWriteOutcome(target: target, release: release, observedVolume: observedVolume)
 
         if let targetMac {
             WalkthroughPresenter.show(.after, targetMac: targetMac, installerName: release.name, originalDriveName: nil)
@@ -295,6 +320,16 @@ struct CreateCommand: AsyncParsableCommand {
             throw ExitCode.failure
 
         case .none:
+            // A named volume that was found but REFUSED (internal, part of
+            // the boot disk, too small, …) is matched here, before falling
+            // back to the generic table — otherwise the user who typed the
+            // exact name of a drive this tool found and rejected never
+            // learns that, or why; they just see the same listing as someone
+            // who typo'd a name that matches nothing at all.
+            if let reason = VolumeTargetResolver.refusalReason(forExactMatch: volume, among: decisions) {
+                print(reason.explanation.rendered())
+                throw ExitCode.failure
+            }
             print(VolumeTableFormatter.render(decisions))
             print("\nPick one with --volume <name or device identifier>.")
             throw ExitCode.failure
@@ -319,7 +354,7 @@ struct CreateCommand: AsyncParsableCommand {
         return try await preparer.prepare(release) { message in print("  \(message)") }
     }
 
-    private func writeInstaller(app: URL, to target: Volume, uuid: String, runner: any CommandRunner) throws {
+    private func writeInstaller(app: URL, to target: Volume, uuid: String, runner: any CommandRunner) throws -> Volume? {
         try InstallMediaWriter(runner: runner).write(
             installerApp: app,
             toVolumeWithUUID: uuid,
@@ -328,7 +363,49 @@ struct CreateCommand: AsyncParsableCommand {
         )
     }
 
+    /// Prints what actually happened, not what `createinstallmedia`'s exit
+    /// code alone implies. C4 of the final fix round: the previous version
+    /// printed a confident "is now named X" from `exitCode == 0` alone, and
+    /// the After stage and the exported file both repeated that unverified
+    /// name as the one to look for at the boot picker. `observedVolume` is
+    /// `InstallMediaWriter.write`'s own post-write re-resolution — `nil` means
+    /// the write reported success but the volume could not be read back
+    /// afterward, which must be said plainly rather than assumed away.
+    private func reportWriteOutcome(target: Volume, release: InstallerRelease, observedVolume: Volume?) {
+        let expectedName = "Install \(release.name)"
+
+        guard let observedVolume else {
+            print("  The write reported success, but \(target.deviceIdentifier) could not be read back "
+                + "afterward to confirm it. Check it in Disk Utility before relying on it being named "
+                + "\"\(expectedName)\".")
+            return
+        }
+
+        guard observedVolume.volumeName == expectedName else {
+            print("  The write reported success, but the volume is now named "
+                + "\"\(observedVolume.volumeName)\", not \"\(expectedName)\" as expected. "
+                + "Look for \"\(observedVolume.volumeName)\" at the boot picker instead.")
+            return
+        }
+
+        print("  Done. \(target.displayName) (\(target.deviceIdentifier)) is now named \"\(expectedName)\".")
+    }
+
     private func warn(_ message: String) {
         FileHandle.standardError.write(Data("warning: \(message)\n".utf8))
+    }
+
+    /// `.legacyESD` and `.softwareUpdate` never reach here — `InstallerPreparer.assertUsable`,
+    /// called from `execute()` right after `fetchRelease`, rejects both before
+    /// the During stage is ever shown — so they map to `.needsDownload` only
+    /// to keep this switch exhaustive without a `default` that would silently
+    /// swallow a real future payload kind.
+    private static func duringPayloadKind(for payload: InstallerRelease.Payload) -> GuidanceCatalog.DuringPayloadKind {
+        switch payload {
+        case .localApplication:
+            return .local
+        case .installAssistant, .legacyESD, .softwareUpdate:
+            return .needsDownload
+        }
     }
 }

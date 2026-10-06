@@ -15,10 +15,12 @@ enum WalkthroughPresenter {
         targetMac: TargetMac,
         installerName: String,
         originalDriveName: String?,
+        payload: GuidanceCatalog.DuringPayloadKind = .needsDownload,
         emit: (String) -> Void = { Swift.print($0) }
     ) {
         let sections = GuidanceCatalog.sections(
-            for: stage, target: targetMac, installerName: installerName, originalDriveName: originalDriveName
+            for: stage, target: targetMac, installerName: installerName,
+            originalDriveName: originalDriveName, payload: payload
         )
         emit("")
         emit(GuidanceRenderer.render(sections))
