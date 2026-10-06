@@ -1,9 +1,11 @@
 # Manual Verification Checklist
 
 **This checklist must be completed before any release tag.** The automated
-suite is 183 tests and zero USB sticks: nothing in CI has ever written real
+suite is 296 tests and zero USB sticks: nothing in CI has ever written real
 media or booted a Mac from it. Every claim the README makes about what this
-tool does on real hardware is only as true as the rows below.
+tool does on real hardware is only as true as the rows below. That includes
+the guided walkthrough's text — a clearly-worded instruction that nobody has
+followed on real hardware is still an unverified claim.
 
 **Any row left unchecked, or checked "fail," must be reflected honestly in the
 README.** Do not mark a capability as working in the README until its row
@@ -362,3 +364,84 @@ again once `installer` expands it into the installer app — and nothing verifie
 If the failure lands after the typed confirmation — which is what the current code does — the
 user has already committed to erasing their drive and waited through a long download before
 learning about a condition that was knowable immediately. See the carry-forward note.
+
+---
+
+## Section C — Guided walkthrough and error handling
+
+These rows cover the target-Mac picker, the three guidance stages, the exported instructions
+file, `--brief`, and the structured error format. Most piggyback on the Section B boot tests
+above rather than needing a separate run — note where each one fits.
+
+### 17. Target-Mac question appears first, and `?` prints usable help
+
+- [ ] Run `create` without `--brief` and without `--volume`. Confirm the target-Mac question
+      ("Which Mac will you boot this installer on?") is the very first thing printed, before
+      anything about versions or drives.
+- [ ] Type `?` at the prompt. Confirm help text prints and the prompt asks again — without
+      counting as a failed attempt (type three wrong answers in a row afterward and confirm `?`
+      did not use any of them up).
+- [ ] Confirm the help text is actually usable to identify a real Mac (check System
+      Information's "Controller"/"iBridge" line as instructed, and confirm it matches what the
+      help text says to look for).
+- Observed: ________________________________________________
+
+### 18. Before stage appears before the typed confirmation
+
+- [ ] Confirm the "Before you start" guidance prints before the typed-name confirmation prompt
+      — not after it, and not interleaved with the volume table.
+- Observed: ________________________________________________
+
+### 19. The two During-stage surprises were pre-announced before they happened
+
+This can only be confirmed on a real run that reaches both surprises (Section B, item 11 for
+the password, item 6 for the TCC dialog).
+
+- [ ] Confirm the During-stage text warning about the invisible password prompt was printed
+      and read BEFORE `installer` actually asked for the password — not after, and not only
+      once the prompt was already on screen.
+- [ ] Confirm the During-stage text warning about the "Terminal would like to access files on a
+      removable volume" dialog was printed and read BEFORE that dialog actually appeared.
+- Observed: ________________________________________________
+
+### 20. After stage shows ONLY the selected target's boot method
+
+- [ ] For a run where you chose Apple silicon, confirm the After stage shows the power-button
+      startup-options method and nothing about holding Option or Startup Security Utility.
+- [ ] For a run where you chose an Intel Mac with T2, confirm the After stage shows the
+      Option-key method AND the Startup Security Utility section.
+- [ ] For a run where you chose an Intel Mac without T2, confirm the After stage shows the
+      Option-key method and does NOT show the Startup Security Utility section.
+- Observed: ________________________________________________
+
+### 21. The exported instructions file was written, and its steps are correct
+
+- [ ] After a successful write (not under `--brief`), confirm a file named
+      `How to use your <installer name> installer (<target>).md` exists on the real Desktop of
+      the Mac that ran `create`.
+- [ ] Open it and confirm its boot steps match what the After stage printed in the terminal,
+      and match the target Mac you actually chose.
+- [ ] Confirm the volume name it tells you to look for matches the real drive's name (cross-
+      reference with item 15 above).
+- Observed: ________________________________________________
+
+### 22. `--brief` suppresses all three stages
+
+- [ ] Run `create --brief` end to end (can be combined with any Section B run). Confirm no
+      target-Mac question, no Before stage, no During stage, no After stage, and no exported
+      instructions file are produced — only the listing/progress text that existed before this
+      plan.
+- Observed: ________________________________________________
+
+### 23. An induced failure produces a three-part message, with technical detail in the log
+
+- [ ] Induce a failure (e.g. the digest-mismatch or size-mismatch setups in items 8–9 above, or
+      an aborted typed confirmation). Confirm the printed message has a clear "what happened"
+      statement, a "what it means" statement (when there is an honest one to give), and a
+      numbered "what to do next" list.
+- [ ] Confirm `~/Library/Logs/macos-installer/<date>.log` was created or appended to, and that
+      it contains the technical detail (exact command, exit status, raw output) that the
+      terminal message deliberately left out.
+- [ ] Confirm the terminal message itself does NOT contain that raw technical detail — only a
+      reference to where it was saved.
+- Observed: ________________________________________________
