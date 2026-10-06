@@ -78,7 +78,12 @@ costing you one of your answer attempts.
 Around the actual work, three guidance stages print:
 
 - **Before** — what you need (a 32 GB+ drive) and what to expect (an erase,
-  a 30–60 minute wait, keep the drive plugged in and the Mac awake).
+  a 30–60 minute wait, keep the drive plugged in and the Mac awake). This
+  stage ends with "Plug the drive in now, then press Return." and waits —
+  the list of mounted drives is taken only *after* you press Return, so a
+  drive you plug in right at that prompt is still picked up. Skipped when
+  stdin is not a terminal (piped input, CI), since nothing there could press
+  Return.
 - **During** — what's happening at each step, including the two things that
   look like problems but aren't: the macOS password prompt that shows no
   characters as you type, and a "Terminal would like to access files on a
@@ -100,7 +105,8 @@ prints only what's strictly necessary, the same as before this plan.
 
 **The real order of operations**, because it is easy to get backwards:
 target-Mac question → look up available versions → pick one → Before stage
-→ list mounted drives → safety checks → **you type the drive's name to
+→ **wait for you to press Return** (skipped on a non-terminal stdin) →
+list mounted drives → safety checks → **you type the drive's name to
 confirm the erase** → During stage → download (8–60 minutes) → digest
 check → the installer app is installed (this is where macOS asks for your
 password) → **the drive is erased and written** → After stage → the
@@ -180,22 +186,26 @@ swift run macos-installer create
 1. ask which Mac will boot the finished installer (skipped under `--brief`),
 2. look up available versions and resolve `--version` to one of them,
 3. show the Before-stage guidance (skipped under `--brief`),
-4. list mounted external volumes and apply the safety checks,
-5. ask you to type the target volume's exact name to confirm, then
-6. show the During-stage guidance (skipped under `--brief`),
-7. download `InstallAssistant.pkg` for the requested version (resuming an
+4. print "Plug the drive in now, then press Return." and wait for Return —
+   skipped when stdin is not a terminal (piped input, CI); the drive list in
+   the next step is taken only *after* this wait, so a drive plugged in
+   right at this prompt is still seen,
+5. list mounted external volumes and apply the safety checks,
+6. ask you to type the target volume's exact name to confirm, then
+7. show the During-stage guidance (skipped under `--brief`),
+8. download `InstallAssistant.pkg` for the requested version (resuming an
    interrupted download, retrying a dropped connection with backoff, and
    retrying once more from scratch on a digest mismatch),
-8. verify it against Apple's published digest,
-9. run `installer` to assemble `Install macOS X.app` (admin password
-   required), then
-10. run `createinstallmedia --volume <mount point> --nointeraction` as root,
+9. verify it against Apple's published digest,
+10. run `installer` to assemble `Install macOS X.app` (admin password
+    required), then
+11. run `createinstallmedia --volume <mount point> --nointeraction` as root,
     then
-11. show the After-stage guidance and save it to a file on the Desktop
+12. show the After-stage guidance and save it to a file on the Desktop
     (skipped under `--brief`).
 
-**Confirmation happens at step 5, before anything is downloaded or
-prepared.** Once you type the volume's name, the erase at step 10 is already
+**Confirmation happens at step 6, before anything is downloaded or
+prepared.** Once you type the volume's name, the erase at step 11 is already
 consented to and will run unattended at the end of a potentially 30+ minute
 download and assembly, with no further prompt. Do not assume that because
 the download is still running nothing has been committed yet, and do not

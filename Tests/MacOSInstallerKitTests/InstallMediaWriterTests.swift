@@ -87,6 +87,40 @@ private final class MessageCollector: @unchecked Sendable {
     }
 }
 
+/// A single ordered timeline that both `progress(...)` calls and runner
+/// invocations append to, so a test can assert that one entry's INDEX
+/// precedes another's — an ordering property, not proximity within either
+/// source alone. Lock-protected for the same reason as `MessageCollector`:
+/// `progress` is `@Sendable`.
+private final class OrderedEventLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [String] = []
+
+    func record(_ entry: String) {
+        lock.lock(); defer { lock.unlock() }
+        entries.append(entry)
+    }
+
+    var entriesSoFar: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return entries
+    }
+}
+
+/// Wraps a `FakeCommandRunner`, logging each invocation's command line to a
+/// shared `OrderedEventLog` before delegating. This is the seam that lets a
+/// test fold runner invocations and `progress(...)` calls into one timeline
+/// instead of two separately-ordered lists that can't be compared by index.
+private struct LoggingCommandRunner: CommandRunner, Sendable {
+    let wrapped: FakeCommandRunner
+    let log: OrderedEventLog
+
+    func run(_ executable: String, _ arguments: [String]) throws -> CommandResult {
+        log.record(([executable] + arguments).joined(separator: " "))
+        return try wrapped.run(executable, arguments)
+    }
+}
+
 @Test("re-resolves the target by UUID and erases the mount point it reports")
 func resolvesThenWrites() throws {
     let runner = FakeCommandRunner()
@@ -219,8 +253,17 @@ func callsProgressBeforeErasing() throws {
 /// first, for a downloaded release, but every release reaches this `sudo -v`
 /// regardless of how it was obtained. Sudo's default `timestamp_timeout` is
 /// 5 minutes and an ~18 GB install routinely exceeds it, so this prompt
-/// commonly appears with nothing printed in front of it. This pins that a
-/// progress line is emitted before `sudo -v` is ever invoked.
+/// commonly appears with nothing printed in front of it. This pins that the
+/// progress call PRECEDES the `sudo -v` INVOCATION — the actual claim —
+/// rather than merely which message came first among messages, which stays
+/// green even if `progress(...)` were moved to run after `sudo -v` has
+/// already prompted.
+///
+/// MUTATION PROOF (round-3 Finding A): move the `progress(...)` call in
+/// `InstallMediaWriter.write` to just before `let volume = try
+/// resolve(uuid: uuid)` — i.e. after `sudo -v` has already run — and this
+/// assertion fails: the logged `sudo -v` entry's index comes before the
+/// logged progress entry's index instead of after it.
 @Test("announces that a password is needed before the sudo -v authentication check runs")
 func announcesPasswordNeedBeforeSudoDashV() throws {
     let runner = FakeCommandRunner()
@@ -230,16 +273,31 @@ func announcesPasswordNeedBeforeSudoDashV() throws {
     runner.stub(standardOutput: "ok",
                 for: "\(sudoPath) \(createInstallMedia) --volume /Volumes/SanDisk Ultra --nointeraction")
 
-    let collector = MessageCollector()
-    try InstallMediaWriter(runner: runner).write(
+    let log = OrderedEventLog()
+    let loggingRunner = LoggingCommandRunner(wrapped: runner, log: log)
+
+    try InstallMediaWriter(runner: loggingRunner).write(
         installerApp: app, toVolumeWithUUID: targetUUID,
-        expectedDeviceIdentifier: "disk5s1", progress: { collector.record($0) }
+        expectedDeviceIdentifier: "disk5s1",
+        progress: { log.record("progress: \($0)") }
     )
 
-    // The first progress message, printed before `write` has issued a single
-    // command, must be the password announcement — not the later "erasing…"
-    // message, which `callsProgressBeforeErasing` above already covers.
-    #expect(collector.messages.first == "Writing the installer needs your password…")
+    let events = log.entriesSoFar
+    let progressEntry = "progress: Writing the installer needs your password…"
+    let sudoDashVEntry = "\(sudoPath) -v"
+
+    guard let progressIndex = events.firstIndex(of: progressEntry) else {
+        Issue.record("expected '\(progressEntry)' to appear in the shared log; got \(events)")
+        return
+    }
+    guard let sudoDashVIndex = events.firstIndex(of: sudoDashVEntry) else {
+        Issue.record("expected '\(sudoDashVEntry)' to appear in the shared log; got \(events)")
+        return
+    }
+
+    // The ordering claim itself, by INDEX in one shared timeline — not by
+    // which message happened to be recorded first among progress messages.
+    #expect(progressIndex < sudoDashVIndex)
 }
 
 // MARK: - C4: success is observed, not just asserted from an exit code
