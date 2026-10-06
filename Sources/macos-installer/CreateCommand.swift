@@ -364,31 +364,17 @@ struct CreateCommand: AsyncParsableCommand {
     }
 
     /// Prints what actually happened, not what `createinstallmedia`'s exit
-    /// code alone implies. C4 of the final fix round: the previous version
-    /// printed a confident "is now named X" from `exitCode == 0` alone, and
-    /// the After stage and the exported file both repeated that unverified
-    /// name as the one to look for at the boot picker. `observedVolume` is
-    /// `InstallMediaWriter.write`'s own post-write re-resolution — `nil` means
-    /// the write reported success but the volume could not be read back
-    /// afterward, which must be said plainly rather than assumed away.
+    /// code alone implies. The decision of what to say — including the
+    /// mismatch case, where the user must be told the OBSERVED name rather
+    /// than just warned the name doesn't match — lives in
+    /// `WriteOutcomeMessage.decide`, in `MacOSInstallerKit`, where it is
+    /// covered by tests. This method only calls it and prints the result;
+    /// see `WriteOutcomeMessage`'s doc comment for why that split matters
+    /// (C4 of the final fix round, and the untested-decision gap found in
+    /// the round after it).
     private func reportWriteOutcome(target: Volume, release: InstallerRelease, observedVolume: Volume?) {
         let expectedName = "Install \(release.name)"
-
-        guard let observedVolume else {
-            print("  The write reported success, but \(target.deviceIdentifier) could not be read back "
-                + "afterward to confirm it. Check it in Disk Utility before relying on it being named "
-                + "\"\(expectedName)\".")
-            return
-        }
-
-        guard observedVolume.volumeName == expectedName else {
-            print("  The write reported success, but the volume is now named "
-                + "\"\(observedVolume.volumeName)\", not \"\(expectedName)\" as expected. "
-                + "Look for \"\(observedVolume.volumeName)\" at the boot picker instead.")
-            return
-        }
-
-        print("  Done. \(target.displayName) (\(target.deviceIdentifier)) is now named \"\(expectedName)\".")
+        print(WriteOutcomeMessage.decide(target: target, expectedName: expectedName, observedVolume: observedVolume).rendered)
     }
 
     private func warn(_ message: String) {
