@@ -222,3 +222,19 @@ The fix is a precheck before the confirmation: compare free space at `CatalogCac
 against the release's `sizeBytes` plus room for the expanded app, and refuse early with a message
 naming how much is needed and how much is free. It belongs with the other guards, not in the download
 path, because the point is to fail BEFORE the user commits.
+
+## Carried from Plan 3's closing re-review
+
+**The During stage promises a digest check that does not always happen.** `duringSteps(for:
+.needsDownload)` unconditionally lists "The download is checked to make sure it arrived intact", but
+`InstallerPreparer.verifyDigestIfPresent` returns immediately — printing nothing — when
+`release.digest` is nil, which happens when Apple's catalog entry carries no `Digest` for that
+package. It is a real, tested path, not hypothetical. This is the same defect shape as the During
+stage's payload problem: guidance describing a step the code may skip. Fixing it means threading a
+digest-present signal into `duringSteps`, so it deserves its own pass rather than a wording patch.
+
+**Manual-verification item 18 cannot verify what C1 fixed.** It checks that the Before stage prints
+before the typed confirmation — print ordering. It never asks the tester to plug a drive in DURING
+the new "press Return" wait and confirm that drive then appears in the listing, which is the entire
+point of the acknowledge phase and the only way to verify it end to end. The checklist is the release
+gate, so this belongs in it properly.
