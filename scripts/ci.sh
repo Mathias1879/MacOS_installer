@@ -39,24 +39,89 @@ if [[ ! -x "${TEST_BINARY}" ]]; then
     exit 1
 fi
 
-echo "==> Coverage for MacOSInstallerKit"
+# Coverage is reported for MacOSInstallerKit (the library) and
+# macos-installer (the executable) SEPARATELY, and only the library figure
+# gates the build.
+#
+# Why: the test target depends on the macos-installer executable target (added
+# in Task 5 so TargetMacPicker's retry loop could be tested), so the combined
+# llvm-cov run has always included the executable's source files since then.
+# The executable is deliberately thin wiring — CreateCommand documents itself
+# as excluded from coverage — so averaging it into one TOTAL dilutes the
+# number the gate was calibrated against: a real library regression from
+# ~96% to ~88% would still clear an 80% combined gate once ~300 untested
+# wiring lines are sitting in the denominator. Gating on the library alone
+# keeps the threshold meaningful.
+#
+# -ignore-filename-regex additionally excludes the other target's directory
+# (llvm-cov prints paths as "<TargetName>/<File>.swift" here) so each report
+# covers exactly one target.
+LIB_IGNORE_REGEX='(Tests|\.build)/|(^|/)macos-installer/'
+EXE_IGNORE_REGEX='(Tests|\.build)/|(^|/)MacOSInstallerKit/'
+COMBINED_IGNORE_REGEX='(Tests|\.build)/'
+
+# The library has sat in the mid-90s for the whole project (95.93% at Task 4,
+# 95.82% as of this round). 93% leaves room for normal single-digit-line
+# fluctuation while still being tight enough that a genuine regression trips
+# it rather than being absorbed.
+LIBRARY_COVERAGE_MINIMUM=93
+
+parse_total_line_coverage() {
+    awk '/^TOTAL/ {gsub(/%/,"",$10); print $10}' "$1"
+}
+
+echo "==> Coverage for MacOSInstallerKit (library — GATED)"
 xcrun llvm-cov report \
     "${TEST_BINARY}" \
     -instr-profile "${PROFDATA}" \
-    -ignore-filename-regex='(Tests|\.build)/' \
-    | tee /tmp/macos-installer-coverage.txt
+    -ignore-filename-regex="${LIB_IGNORE_REGEX}" \
+    | tee /tmp/macos-installer-coverage-library.txt
 
-TOTAL="$(awk '/^TOTAL/ {gsub(/%/,"",$10); print $10}' /tmp/macos-installer-coverage.txt)"
+LIBRARY_TOTAL="$(parse_total_line_coverage /tmp/macos-installer-coverage-library.txt)"
 
-if [[ -z "${TOTAL}" ]]; then
-    echo "FAIL: could not parse total line coverage from llvm-cov output" >&2
+if [[ -z "${LIBRARY_TOTAL}" ]]; then
+    echo "FAIL: could not parse library total line coverage from llvm-cov output" >&2
     exit 1
 fi
 
-echo "==> Total line coverage: ${TOTAL}%"
+echo "==> MacOSInstallerKit line coverage: ${LIBRARY_TOTAL}%"
 
-if awk "BEGIN {exit !(${TOTAL} < 80)}"; then
-    echo "FAIL: coverage ${TOTAL}% is below the 80% minimum" >&2
+echo "==> Coverage for macos-installer (executable — informational only, NOT gated)"
+echo "    Thin wiring by design (see CreateCommand.swift's doc comment);"
+echo "    low numbers here are expected and do not indicate rot."
+xcrun llvm-cov report \
+    "${TEST_BINARY}" \
+    -instr-profile "${PROFDATA}" \
+    -ignore-filename-regex="${EXE_IGNORE_REGEX}" \
+    | tee /tmp/macos-installer-coverage-executable.txt
+
+EXECUTABLE_TOTAL="$(parse_total_line_coverage /tmp/macos-installer-coverage-executable.txt)"
+
+if [[ -z "${EXECUTABLE_TOTAL}" ]]; then
+    echo "FAIL: could not parse executable total line coverage from llvm-cov output" >&2
+    exit 1
+fi
+
+echo "==> macos-installer line coverage: ${EXECUTABLE_TOTAL}% (informational)"
+
+echo "==> Combined coverage (library + executable — informational only, NOT gated)"
+xcrun llvm-cov report \
+    "${TEST_BINARY}" \
+    -instr-profile "${PROFDATA}" \
+    -ignore-filename-regex="${COMBINED_IGNORE_REGEX}" \
+    | tee /tmp/macos-installer-coverage-combined.txt
+
+COMBINED_TOTAL="$(parse_total_line_coverage /tmp/macos-installer-coverage-combined.txt)"
+
+if [[ -z "${COMBINED_TOTAL}" ]]; then
+    echo "FAIL: could not parse combined total line coverage from llvm-cov output" >&2
+    exit 1
+fi
+
+echo "==> Combined line coverage: ${COMBINED_TOTAL}% (informational)"
+
+if awk "BEGIN {exit !(${LIBRARY_TOTAL} < ${LIBRARY_COVERAGE_MINIMUM})}"; then
+    echo "FAIL: MacOSInstallerKit coverage ${LIBRARY_TOTAL}% is below the ${LIBRARY_COVERAGE_MINIMUM}% minimum" >&2
     exit 1
 fi
 
