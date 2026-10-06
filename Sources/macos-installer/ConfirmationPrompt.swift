@@ -13,6 +13,6 @@ enum ConfirmationPrompt {
         _ expected: String,
         readLine: () -> String? = { Swift.readLine(strippingNewline: true) }
     ) -> Bool {
-        readLine()?.trimmingCharacters(in: .whitespaces) == expected
+        readLine()?.trimmingCharacters(in: .whitespacesAndNewlines) == expected
     }
 }

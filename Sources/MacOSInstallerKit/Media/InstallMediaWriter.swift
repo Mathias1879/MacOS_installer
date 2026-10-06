@@ -117,6 +117,14 @@ public struct InstallMediaWriter {
         // development machine, and running createinstallmedia for real is out
         // of scope here. This must be confirmed on the Task 13
         // manual-verification checklist before it is trusted.
+        //
+        // KNOWN, IRREDUCIBLE RACE: every guard above binds a volume UUID, but
+        // `createinstallmedia --volume` takes a PATH. Between reading
+        // `volume.mountPoint` and createinstallmedia resolving it, an unmount
+        // plus a remount of a same-named volume at the same path would erase
+        // the wrong drive. It is one exec wide and cannot be closed without an
+        // Apple interface that accepts a volume UUID. Real on any machine with
+        // two same-named volumes.
         let arguments = [tool, "--volume", mountPoint, "--nointeraction"]
 
         let result: CommandResult

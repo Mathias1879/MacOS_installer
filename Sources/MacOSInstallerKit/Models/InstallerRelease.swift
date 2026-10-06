@@ -66,7 +66,6 @@ public struct InstallerRelease: Equatable, Sendable {
     }
 
     public var displaySize: String {
-        let gigabytes = Double(sizeBytes) / 1_000_000_000
-        return String(format: "%.1f GB", gigabytes)
+        ByteSize.gigabytes(sizeBytes)
     }
 }

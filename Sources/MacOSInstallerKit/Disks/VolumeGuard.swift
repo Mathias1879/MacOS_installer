@@ -31,13 +31,9 @@ public enum VolumeGuard {
             case .holdsProtectedPath(let path):
                 return "This volume holds files this operation needs (\(path))."
             case .tooSmall(let capacity, let required):
-                return "This drive holds \(Self.gigabytes(capacity)), "
-                    + "but \(Self.gigabytes(required)) is needed."
+                return "This drive holds \(ByteSize.gigabytes(capacity)), "
+                    + "but \(ByteSize.gigabytes(required)) is needed."
             }
-        }
-
-        private static func gigabytes(_ bytes: Int64) -> String {
-            String(format: "%.1f GB", Double(bytes) / 1_000_000_000)
         }
 
         /// A three-part explanation alongside `userMessage`. `userMessage`
@@ -103,11 +99,11 @@ public enum VolumeGuard {
             case .tooSmall(let capacity, let required):
                 return UserFacingError(
                     title: "This drive is too small",
-                    whatHappened: "This drive holds \(Self.gigabytes(capacity)), but "
-                        + "\(Self.gigabytes(required)) is needed.",
+                    whatHappened: "This drive holds \(ByteSize.gigabytes(capacity)), but "
+                        + "\(ByteSize.gigabytes(required)) is needed.",
                     whatItMeans: "The installer and its working space don't fit in the space available.",
                     whatToDoNext: [
-                        "Use a larger drive with at least \(Self.gigabytes(required)) of free space",
+                        "Use a larger drive with at least \(ByteSize.gigabytes(required)) of free space",
                     ]
                 )
             }
