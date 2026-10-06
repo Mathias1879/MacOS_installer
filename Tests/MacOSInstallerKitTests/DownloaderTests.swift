@@ -104,21 +104,47 @@ func retriesThenThrows() async throws {
     #expect(transfer.offsets.count == 3)
 }
 
-@Test("a retry resumes from the partial file rather than restarting")
+@Test("a retry resumes from wherever the previous attempt actually got to, not just its starting offset")
 func retryResumesFromPartial() async throws {
     let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
     let destination = dir.appendingPathComponent("InstallAssistant.pkg")
     try Data("012".utf8).write(to: destination)
     struct Boom: Error {}
-    let transfer = FakeTransfer(payload: Data("0123456789".utf8), error: Boom())
+    // Writes 4 more bytes before throwing, so the first attempt actually
+    // advances the file from 3 bytes to 7 before failing. A `FakeTransfer`
+    // that throws before writing anything (the old fixture) can never tell
+    // this test apart from a buggy `Downloader` that hoists `alreadyHave` out
+    // of the retry loop and recomputes it only once: both would report [3, 3].
+    let transfer = FakeTransfer(payload: Data("0123456789".utf8), error: Boom(), bytesBeforeThrowing: 4)
 
     _ = try? await Downloader(
         transfer: transfer, maximumAttempts: 2, backoff: { _ in .zero }
     ).download(from: remote, to: destination, expectedBytes: 10) { _, _ in }
 
-    // Both attempts start at 3 — restarting an 18 GB download from zero is not
-    // a recovery strategy.
-    #expect(transfer.offsets == [3, 3])
+    // The second attempt must start at 3 + 4 = 7, not 3 again — proving
+    // `alreadyHave` is recomputed per attempt rather than hoisted out of the
+    // loop, which is exactly the property this test is named for. Exact
+    // values, not just "strictly increasing", per fix round 2 Finding 3.
+    #expect(transfer.offsets == [3, 7])
+}
+
+@Test("the final attempt succeeds when the transfer wrote the complete file before throwing")
+func finalAttemptSucceedsWhenFileIsActuallyComplete() async throws {
+    let dir = try tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+    let destination = dir.appendingPathComponent("InstallAssistant.pkg")
+    struct Boom: Error {}
+    // curl can write every expected byte and still exit non-zero — the
+    // payload lands intact and the process reports failure anyway.
+    let transfer = FakeTransfer(payload: Data("0123456789".utf8), error: Boom(), bytesBeforeThrowing: 10)
+
+    // maximumAttempts: 1 makes this the final (and only) attempt, so there is
+    // no next iteration's `alreadyHave >= expectedBytes` check to self-heal
+    // the false failure. `download` must not throw.
+    _ = try await Downloader(
+        transfer: transfer, maximumAttempts: 1, backoff: { _ in .zero }
+    ).download(from: remote, to: destination, expectedBytes: 10) { _, _ in }
+
+    #expect(try Data(contentsOf: destination) == Data("0123456789".utf8))
 }
 
 @Test("succeeds without retrying when the first attempt works")
@@ -160,6 +186,38 @@ func totalBackoffAcrossDefaultAttemptsIsBounded() {
     // past 10 seconds — heading toward a multi-minute stall — fails here
     // instead of only showing up as a user complaint about a frozen install.
     #expect(totalWait < .seconds(10))
+}
+
+@Test("the combined worst case across both retry layers stays under a chosen ceiling")
+func combinedWorstCaseRetryTimeStaysUnderCeiling() {
+    let backoff = Downloader.defaultBackoff
+    let maximumAttempts = Downloader.defaultMaximumAttempts
+    let maximumDigestAttempts = InstallerPreparer.maximumDigestAttempts
+
+    // One `Downloader.download` call's worst-case backoff: a wait after
+    // every failed attempt except the last — same computation as
+    // `totalBackoffAcrossDefaultAttemptsIsBounded`, which only covers this
+    // one `Downloader` in isolation.
+    let perDownloadWait = (1..<maximumAttempts).reduce(Duration.zero) { $0 + backoff($1) }
+
+    // `InstallerPreparer.downloadAndVerify` retries a whole download-and-verify
+    // cycle up to `maximumDigestAttempts` times on a recurring digest
+    // mismatch, so the two retry layers compound: worst case is
+    // `maximumDigestAttempts` full `Downloader` retry cycles, one after
+    // another, and `maximumAttempts` transfer attempts within each.
+    let combinedWorstCaseWait = perDownloadWait * maximumDigestAttempts
+    let combinedWorstCaseAttempts = maximumAttempts * maximumDigestAttempts
+
+    // 15s is chosen as a ceiling comfortably above the 6s (2 x 3s) this
+    // produces today — today's two layers compound to double
+    // `totalBackoffAcrossDefaultAttemptsIsBounded`'s own 10s ceiling — but
+    // well short of a user concluding the tool has hung. A future bump to
+    // EITHER `Downloader.defaultMaximumAttempts` or
+    // `InstallerPreparer.maximumDigestAttempts` that silently pushed the
+    // combined wait past 15s fails here, computed from both named constants
+    // rather than from a copied literal.
+    #expect(combinedWorstCaseWait < .seconds(15))
+    #expect(combinedWorstCaseAttempts == 6)
 }
 
 @Test("fires onRetry once per retry, with the attempt number, but not on a first-attempt success")

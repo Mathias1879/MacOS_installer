@@ -306,7 +306,7 @@ struct CreateCommand: AsyncParsableCommand {
             downloader: Downloader(
                 transfer: CurlResumableTransfer(commandRunner: runner),
                 onRetry: { attempt, wait, error in
-                    print("  Transfer attempt \(attempt) failed (\(error)); retrying in \(wait)…")
+                    print("  \(retryMessage(attempt: attempt, wait: wait, error: error))")
                 }
             ),
             assembler: InstallAssistantAssembler(runner: runner)

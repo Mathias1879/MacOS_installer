@@ -111,8 +111,10 @@ public struct Downloader {
     /// Retries a failing transfer up to `maximumAttempts` times, recomputing
     /// `alreadyHave` on every attempt so a partially-written file resumes
     /// instead of restarting from zero. Returns normally once the file is
-    /// already complete or a transfer attempt succeeds; rethrows the last
-    /// transfer error once attempts are exhausted.
+    /// already complete, a transfer attempt succeeds, or (on the final
+    /// attempt only) the failing transfer turns out to have written the
+    /// complete file anyway; rethrows the last transfer error only when
+    /// attempts are exhausted AND the file is still incomplete.
     private func transferIfNeeded(
         from url: URL,
         to destination: URL,
@@ -130,7 +132,20 @@ public struct Downloader {
                 }
                 return
             } catch {
-                if attempt == maximumAttempts { throw error }
+                if attempt == maximumAttempts {
+                    // curl can write every expected byte and still exit
+                    // non-zero — the payload lands correctly but the process
+                    // reports failure anyway. On a non-final attempt this
+                    // self-heals: the next iteration's `alreadyHave >=
+                    // expectedBytes` check above returns success. The final
+                    // attempt has no next iteration, so it must re-check here
+                    // instead of rethrowing a transfer error for a file that
+                    // is, in fact, complete. This is safe: the caller still
+                    // runs the `finalSize == expectedBytes` guard and the
+                    // digest check, so wrong content cannot slip through.
+                    if fileManager.fileSize(at: destination) >= expectedBytes { return }
+                    throw error
+                }
                 let wait = backoff(attempt)
                 onRetry(attempt, wait, error)
                 try await Task.sleep(for: wait)

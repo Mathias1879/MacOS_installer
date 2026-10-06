@@ -115,7 +115,11 @@ public struct InstallerPreparer {
     /// case is already handled inside `Downloader`'s own attempt loop); it
     /// means the catalog's published digest itself is wrong, and looping
     /// forever would just hide that behind an endless retry.
-    private static let maximumDigestAttempts = 2
+    // `internal` rather than `private` so a test can bind to this same named
+    // constant — see `combinedWorstCaseRetryTimeStaysUnderCeiling` in
+    // `DownloaderTests.swift` — instead of copying the literal `2`, which
+    // would silently stop tracking a future bump to this value.
+    static let maximumDigestAttempts = 2
 
     private func downloadAndAssemble(
         release: InstallerRelease,
@@ -143,8 +147,18 @@ public struct InstallerPreparer {
                 try verifyDigestIfPresent(of: release, at: pkg, progress: progress)
                 return
             } catch let error as DigestError {
+                // Deliberately catches both `.mismatch` and `.unreadable`,
+                // not just the mismatch case the original brief named.
+                // `.unreadable` means the just-downloaded file could not be
+                // read back to hash it — plausibly a transient read failure
+                // (e.g. the drive hiccuping) rather than a corrupt download —
+                // and `verifyDigestIfPresent` has already deleted it either
+                // way, so one retry (a fresh download) is a reasonable thing
+                // to try before giving up. The progress message below is
+                // worded to cover both cases rather than claiming a mismatch
+                // that may not have happened.
                 if attempt == Self.maximumDigestAttempts { throw error }
-                progress("The download didn't match Apple's published digest — downloading it again…")
+                progress("The downloaded file didn't verify — downloading it again…")
             }
         }
     }
