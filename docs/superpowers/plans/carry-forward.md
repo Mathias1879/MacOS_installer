@@ -220,3 +220,24 @@ the Before stage printing after volume enumeration, and the During stage claimin
 comes first when it comes third — are properties of this one function's order of operations. It is
 excluded from coverage by design, which means ordering is the one thing reviews must read by eye.
 Keep it short enough to read as a sequence.
+
+## Carried from Plan 3, Task 9 — a missing precheck found from the environment, not the code
+
+**Nothing validates free space on the HOST before downloading.** `VolumeGuard` checks the TARGET
+volume's capacity against the installer size plus 2 GB headroom. No equivalent check exists for the
+machine running the command, where `InstallAssistant.pkg` (~15 GB for a modern release) downloads
+into the cache directory and `installer` then expands it into an `Install macOS *.app` of comparable
+size — so roughly 30 GB of host free space is needed and never verified.
+
+Found because the development machine was sitting at 1.4 GiB free of 228 GiB (APFS container 0.6%
+free) during Task 9, which produced repeated transient ENOSPC failures in the agent's own shell.
+
+Why it matters more than an ordinary missing check: the failure lands AFTER the user has typed their
+drive's name to confirm erasure. The sequence is target question → Before stage → volume selection →
+TYPED CONFIRMATION → 8-60 minute download → ENOSPC. The user has already committed, waited, and then
+gets a disk-full error for a condition knowable in the first second.
+
+The fix is a precheck before the confirmation: compare free space at `CatalogCache.defaultDirectory`
+against the release's `sizeBytes` plus room for the expanded app, and refuse early with a message
+naming how much is needed and how much is free. It belongs with the other guards, not in the download
+path, because the point is to fail BEFORE the user commits.

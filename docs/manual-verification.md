@@ -345,3 +345,20 @@ for a name that is not on screen, which is indistinguishable to them from a fail
 
 If they differ, the derivation in `GuidanceCatalog` needs replacing with the name read back
 from the drive after the write completes.
+
+### 16. Host free space is checked before the user commits
+
+There is currently NO check of free space on the machine running the command. The download
+needs roughly 30 GB of host space — about 15 GB for `InstallAssistant.pkg` and about as much
+again once `installer` expands it into the installer app — and nothing verifies it.
+
+- [ ] On a host with less free space than the release needs, run `create` and record WHERE the
+      failure happens relative to the typed confirmation.
+      Failed at: ______________________
+- [ ] Confirm whether the error names disk space as the cause, or surfaces as a generic
+      transfer failure.
+      Message shown: ______________________
+
+If the failure lands after the typed confirmation — which is what the current code does — the
+user has already committed to erasing their drive and waited through a long download before
+learning about a condition that was knowable immediately. See the carry-forward note.
