@@ -202,6 +202,40 @@ func sizeMismatchDeletesTheStalePackage() async throws {
     #expect(FileManager.default.fileExists(atPath: expectedPkg.path) == false)
 }
 
+@Test("re-downloads once on a digest mismatch before giving up")
+func reDownloadsOnceOnDigestMismatch() async throws {
+    let cacheDir = try tempDir(); defer { try? FileManager.default.removeItem(at: cacheDir) }
+    // A transfer that yields corrupt bytes on every attempt: the digest
+    // check fails identically each time, so the preparer must make exactly
+    // two download attempts (the original plus one re-download) before
+    // giving up — never looping indefinitely.
+    let payloadBytes = Data("pkg-bytes".utf8)
+    let wrongDigest = String(repeating: "0", count: 40)
+
+    let transfer = FakeTransfer(payload: payloadBytes)
+    let assembler = FakeAssembler(outcome: .failure(StubAssemblerError.shouldNotHaveBeenCalled))
+    let preparer = InstallerPreparer(
+        downloader: Downloader(transfer: transfer),
+        assembler: assembler,
+        cacheDirectory: cacheDir
+    )
+
+    let url = URL(string: "https://swcdn.apple.com/x/InstallAssistant.pkg")!
+    await #expect(throws: (any Error).self) {
+        _ = try await preparer.prepare(
+            release(
+                payload: .installAssistant(url: url), sizeBytes: Int64(payloadBytes.count), digest: wrongDigest
+            )
+        ) { _ in }
+    }
+
+    // One original transfer plus one re-download, never more: the counter
+    // is `transfer.offsets.count`, i.e. how many times the fake's
+    // `transfer(from:to:startingAt:progress:)` was actually invoked.
+    #expect(transfer.offsets.count == 2)
+    #expect(assembler.invocations.isEmpty)
+}
+
 @Test("fails clearly, not with a crash, for a legacy ESD payload")
 func legacyESDFailsClearly() async throws {
     let transfer = FakeTransfer(payload: Data())
@@ -226,5 +260,35 @@ func softwareUpdatePayloadTellsUserToFetchFirst() async throws {
     #expect(
         InstallerPreparationError.softwareUpdateOnly(version: "26.7").userMessage
             .contains("softwareupdate --fetch-full-installer")
+    )
+}
+
+// MARK: - C3: refusing an unusable release before any confirmation
+
+/// `assertUsable` is what `CreateCommand.execute()` calls immediately after
+/// `fetchRelease`, before the Before stage, volume enumeration, or the typed
+/// erase confirmation ever run — so this pins the exact error for every
+/// payload kind that must be refused there, independent of `prepare`'s own
+/// (still-present) check.
+@Test("assertUsable throws softwareUpdateOnly for a softwareUpdate payload, before anything else runs")
+func assertUsableRejectsSoftwareUpdatePayload() {
+    #expect(throws: InstallerPreparationError.softwareUpdateOnly(version: "26.7")) {
+        try InstallerPreparer.assertUsable(release(payload: .softwareUpdate(version: "26.7")))
+    }
+}
+
+@Test("assertUsable throws legacyAssemblyNotSupported for a legacyESD payload")
+func assertUsableRejectsLegacyESDPayload() {
+    #expect(throws: InstallerPreparationError.legacyAssemblyNotSupported) {
+        try InstallerPreparer.assertUsable(release(payload: .legacyESD(urls: [])))
+    }
+}
+
+@Test("assertUsable does not throw for a payload prepare can actually use")
+func assertUsableAcceptsUsablePayloads() throws {
+    let url = URL(string: "https://swcdn.apple.com/x/InstallAssistant.pkg")!
+    try InstallerPreparer.assertUsable(release(payload: .installAssistant(url: url)))
+    try InstallerPreparer.assertUsable(
+        release(payload: .localApplication(path: URL(fileURLWithPath: "/Applications/Install macOS Tahoe.app")))
     )
 }

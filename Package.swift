@@ -22,7 +22,7 @@ let package = Package(
         .target(name: "MacOSInstallerKit"),
         .testTarget(
             name: "MacOSInstallerKitTests",
-            dependencies: ["MacOSInstallerKit"],
+            dependencies: ["MacOSInstallerKit", "macos-installer"],
             resources: [.copy("Fixtures")]
         ),
     ]

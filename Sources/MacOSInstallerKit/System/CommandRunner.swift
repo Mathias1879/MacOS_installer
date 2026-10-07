@@ -17,6 +17,38 @@ public enum CommandError: Error, Equatable {
     case launchFailed(executable: String, reason: String)
 }
 
+/// `CommandError` comes from `CommandRunner`, which anything in this codebase
+/// may call — including, today, `InstallMediaWriter`'s own `sudo` and
+/// `createinstallmedia` invocations (trapped into `MediaWriteError` before a
+/// caller ever sees a bare `CommandError`, but that trapping is a property of
+/// the call site, not of this type). This explanation MUST NOT say or imply
+/// anything about whether a drive was touched, erased, or written: a future
+/// call site added after an erase has begun would turn any such claim into a
+/// lie. It names the executable and the reason, and stops there.
+extension CommandError: Explainable {
+    public var explanation: UserFacingError {
+        switch self {
+        case .launchFailed(let executable, let reason):
+            return UserFacingError(
+                title: "A required tool could not be run",
+                whatHappened: "Could not run \(executable): \(reason).",
+                whatItMeans: "macOS was unable to launch this program at all.",
+                whatToDoNext: [
+                    "Run this command again",
+                    "If it keeps failing, confirm \(executable) exists on this Mac",
+                ]
+            )
+        }
+    }
+
+    public var technicalDetail: String {
+        switch self {
+        case .launchFailed(let executable, let reason):
+            return "CommandError.launchFailed executable=\(executable) reason=\(reason)"
+        }
+    }
+}
+
 /// Every subprocess in this library goes through this protocol so tests can
 /// substitute a recording fake. Nothing outside `RealCommandRunner` may use
 /// `Foundation.Process` directly.

@@ -16,7 +16,7 @@ public enum VolumeTableFormatter {
         for decision in decisions {
             let name = decision.volume.displayName
             let id = decision.volume.deviceIdentifier
-            let size = String(format: "%.1f GB", Double(decision.volume.sizeBytes) / 1_000_000_000)
+            let size = ByteSize.gigabytes(decision.volume.sizeBytes)
             switch decision.verdict {
             case .selectable:
                 lines.append("  \(name)  \(id)  \(size)")

@@ -20,7 +20,8 @@ func realRunnerReportsFailureExitCode() throws {
     #expect(result.exitCode != 0)
 }
 
-@Test("drains both pipes concurrently, so a child that floods stderr cannot deadlock")
+@Test("drains both pipes concurrently, so a child that floods stderr cannot deadlock",
+      .timeLimit(.minutes(1)))
 func doesNotDeadlockWhenChildFloodsStderr() throws {
     let runner = RealCommandRunner()
 

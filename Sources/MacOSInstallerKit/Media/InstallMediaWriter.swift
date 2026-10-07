@@ -6,6 +6,14 @@ public enum MediaWriteError: Error, Equatable {
     case targetNotMounted(uuid: String)
     case installerToolMissing(path: String)
     case authenticationFailed(message: String)
+    /// `runner.run` itself threw before `createinstallmedia` ever started.
+    /// `RealCommandRunner.run` has exactly one throw site —
+    /// `CommandError.launchFailed`, wrapped around `Process.run()`
+    /// (`CommandRunner.swift`) — and that throw happens before the child
+    /// process exists. No process means nothing executed, so this case can
+    /// truthfully say the drive was not touched; it must not be folded into
+    /// `writeFailedDriveStateUnknown`.
+    case writeToolDidNotLaunch(message: String)
     /// `createinstallmedia` exited non-zero. The drive's state cannot be known
     /// from this alone: the erase may have started and been interrupted
     /// partway through. Callers MUST treat the target as a non-bootable,
@@ -31,12 +39,18 @@ public struct InstallMediaWriter {
         self.runner = runner
     }
 
+    /// Returns the volume as re-resolved AFTER a successful write, so the
+    /// caller can report the name actually observed rather than assuming
+    /// success renamed it to whatever was expected — the code-side check for
+    /// manual-verification row 15. `@discardableResult` because most of this
+    /// type's own tests only care that `write` didn't throw.
+    @discardableResult
     public func write(
         installerApp: URL,
         toVolumeWithUUID uuid: String,
         expectedDeviceIdentifier: String,
         progress: @Sendable (String) -> Void
-    ) throws {
+    ) throws -> Volume? {
         let tool = installerApp
             .appendingPathComponent("Contents/Resources/createinstallmedia")
             .path
@@ -55,6 +69,15 @@ public struct InstallMediaWriter {
         // volume mounted at the same path — while the prompt is up. This
         // machine already has two volumes named "Untitled", so a same-name,
         // same-path remount during that wait is not a hypothetical.
+        // Announced before sudo is ever invoked: on the `.localApplication`
+        // path this is the ONLY password prompt the whole run produces, and
+        // on the downloaded path it is the SECOND one (`InstallAssistantAssembler`
+        // raises the first). Sudo's default `timestamp_timeout` is 5 minutes
+        // and assembling an ~18 GB package routinely exceeds it, so this
+        // second prompt is common, not an edge case — no path may reach it
+        // with nothing printed immediately beforehand.
+        progress("Writing the installer needs your password…")
+
         // Wrapped rather than a bare `try`: a launch failure here (e.g. sudo
         // missing from PATH) would otherwise surface as a raw `CommandError`
         // instead of `MediaWriteError`, which is the one type callers catch
@@ -109,18 +132,28 @@ public struct InstallMediaWriter {
         // development machine, and running createinstallmedia for real is out
         // of scope here. This must be confirmed on the Task 13
         // manual-verification checklist before it is trusted.
+        //
+        // KNOWN, IRREDUCIBLE RACE: every guard above binds a volume UUID, but
+        // `createinstallmedia --volume` takes a PATH. Between reading
+        // `volume.mountPoint` and createinstallmedia resolving it, an unmount
+        // plus a remount of a same-named volume at the same path would erase
+        // the wrong drive. It is one exec wide and cannot be closed without an
+        // Apple interface that accepts a volume UUID. Real on any machine with
+        // two same-named volumes.
         let arguments = [tool, "--volume", mountPoint, "--nointeraction"]
 
         let result: CommandResult
         do {
             result = try runner.run(Self.sudoPath, arguments)
         } catch {
-            // A launch failure here is just as unable to prove the drive is
-            // untouched as a non-zero exit, so it funnels into the same
-            // "unknown state" case rather than leaking CommandError in a
-            // foreign error domain.
-            throw MediaWriteError.writeFailedDriveStateUnknown(
-                exitCode: -1,
+            // A launch failure here means createinstallmedia never started.
+            // RealCommandRunner.run has exactly one throw site —
+            // CommandError.launchFailed, wrapped around Process.run() itself
+            // — and it fires before any child process exists. That is
+            // structural certainty that nothing was written, not an
+            // inference, so this is a distinct, strictly safer case than a
+            // non-zero exit and must not share its wording.
+            throw MediaWriteError.writeToolDidNotLaunch(
                 message: "createinstallmedia did not launch: \(error)"
             )
         }
@@ -138,6 +171,19 @@ public struct InstallMediaWriter {
                 message: message
             )
         }
+
+        // `createinstallmedia` exiting zero means the command reported
+        // success — not that this tool has observed the result. The erase
+        // formats the destination's filesystem, which typically assigns it a
+        // new `VolumeUUID`, so `uuid` (confirmed above, before the write) is
+        // not guaranteed to resolve anything now. `expectedDeviceIdentifier`
+        // names the partition slot rather than the filesystem instance and
+        // survives the reformat, so this re-resolves by that instead, through
+        // the same `diskutil info -plist` path used above. `nil` means the
+        // exit code reported success but the volume could not be read back
+        // afterward — the caller must not report a confident name in that
+        // case; see `CreateCommand.reportWriteOutcome`.
+        return try? resolve(uuid: expectedDeviceIdentifier)
     }
 
     private func resolve(uuid: String) throws -> Volume {
@@ -147,5 +193,137 @@ public struct InstallMediaWriter {
             let volume = try? DiskutilClient.parseInfo(Data(info.standardOutput.utf8))
         else { throw MediaWriteError.targetDisappeared(uuid: uuid) }
         return volume
+    }
+}
+
+/// The first six cases — including `writeToolDidNotLaunch`, raised when
+/// `runner.run` throws before `createinstallmedia` ever starts — are all
+/// raised before the tool writes anything, so they can truthfully say the
+/// drive was not touched. The last, `writeFailedDriveStateUnknown`, cannot
+/// make that claim: it is only reachable once `createinstallmedia` has
+/// actually launched and then exited non-zero, so the erase may have started
+/// and been interrupted partway through, leaving the drive partially written
+/// and non-bootable. Its explanation must not say or imply that nothing
+/// happened, and must not suggest that a retry will fix it — the drive has to
+/// be erased and rewritten from scratch.
+extension MediaWriteError: Explainable {
+    public var explanation: UserFacingError {
+        switch self {
+        case .targetDisappeared(let uuid):
+            return UserFacingError(
+                title: "The drive disappeared",
+                whatHappened: "The drive you chose (\(uuid)) is no longer connected, so nothing was erased.",
+                whatItMeans: "It was probably unplugged, or it went to sleep.",
+                whatToDoNext: [
+                    "Plug the drive back in and wait for it to appear on your desktop",
+                    "Run this command again",
+                ]
+            )
+
+        case .targetMoved(let expected, let found):
+            return UserFacingError(
+                title: "The drive moved",
+                whatHappened: "The drive you confirmed was \(expected), but it is now \(found). "
+                    + "Nothing was erased.",
+                whatItMeans: "macOS renumbers drives when devices are plugged in or unplugged. "
+                    + "This tool stopped rather than risk erasing a different drive.",
+                whatToDoNext: [
+                    "Leave your drives connected as they are",
+                    "Run this command again and confirm the drive you want",
+                ]
+            )
+
+        case .targetNotMounted(let uuid):
+            return UserFacingError(
+                title: "The drive isn't ready",
+                whatHappened: "The drive you chose (\(uuid)) is connected but not mounted, "
+                    + "so nothing was erased.",
+                whatItMeans: "macOS can see the hardware but hasn't made the drive available yet.",
+                whatToDoNext: [
+                    "Unplug the drive, wait a few seconds, and plug it back in",
+                    "Wait until it appears on your desktop",
+                    "Run this command again",
+                ]
+            )
+
+        case .installerToolMissing(let path):
+            return UserFacingError(
+                title: "The installer app is incomplete",
+                whatHappened: "The tool macOS uses to write the drive wasn't found inside the installer "
+                    + "app. Nothing was erased.",
+                whatItMeans: "The installer app is damaged or only partly downloaded.",
+                whatToDoNext: [
+                    "Delete the installer app from your Applications folder",
+                    "Run this command again so it downloads a fresh copy",
+                    "If it keeps failing, the expected location was: \(path)",
+                ]
+            )
+
+        case .authenticationFailed:
+            return UserFacingError(
+                title: "The password wasn't accepted",
+                whatHappened: "macOS didn't accept the administrator password, so nothing was erased.",
+                whatItMeans: "Writing a drive needs administrator permission. "
+                    + "The prompt shows no characters at all as you type, which can make it feel broken.",
+                whatToDoNext: [
+                    "Run this command again",
+                    "Type your Mac login password when asked — you will see nothing appear, which is normal",
+                    "Press Return",
+                ]
+            )
+
+        // No `message` binding on purpose. The payload is a raw Swift error
+        // description, and interpolating it here printed enum syntax like
+        // `launchFailed(executable:…)` to the user. It belongs in
+        // `technicalDetail` and the log, the same way `authenticationFailed`
+        // above keeps its payload out of the user's view.
+        case .writeToolDidNotLaunch:
+            return UserFacingError(
+                title: "The installer tool couldn't be started",
+                whatHappened: "macOS could not start createinstallmedia, the tool that writes the drive, "
+                    + "so nothing was erased.",
+                whatItMeans: "Either that tool or the sudo command it runs through is missing or "
+                    + "unusable on this Mac. This failure happens before any writing can begin, so "
+                    + "the drive is exactly as it was.",
+                whatToDoNext: [
+                    "Run this command again",
+                    "If it keeps failing, confirm sudo and createinstallmedia are available on this Mac",
+                ]
+            )
+
+        case .writeFailedDriveStateUnknown:
+            return UserFacingError(
+                title: "The drive is in an unknown state",
+                whatHappened: "The erase began but did not finish before createinstallmedia stopped.",
+                whatItMeans: "The drive may be partially erased. It is not safe to boot from, and it is "
+                    + "not in the state it was in before you started — do not assume it is unchanged, "
+                    + "and do not retry in place.",
+                whatToDoNext: [
+                    "Do not use this drive to install macOS",
+                    "Do not retry — erase and rewrite it from scratch using Disk Utility "
+                        + "(it's in Applications, inside Utilities)",
+                    "Then run this command again",
+                ]
+            )
+        }
+    }
+
+    public var technicalDetail: String {
+        switch self {
+        case .targetDisappeared(let uuid):
+            return "MediaWriteError.targetDisappeared uuid=\(uuid)"
+        case .targetMoved(let expected, let found):
+            return "MediaWriteError.targetMoved expected=\(expected) found=\(found)"
+        case .targetNotMounted(let uuid):
+            return "MediaWriteError.targetNotMounted uuid=\(uuid)"
+        case .installerToolMissing(let path):
+            return "MediaWriteError.installerToolMissing path=\(path)"
+        case .authenticationFailed(let message):
+            return "MediaWriteError.authenticationFailed message=\(message)"
+        case .writeToolDidNotLaunch(let message):
+            return "MediaWriteError.writeToolDidNotLaunch message=\(message)"
+        case .writeFailedDriveStateUnknown(let exitCode, let message):
+            return "MediaWriteError.writeFailedDriveStateUnknown exitCode=\(exitCode) message=\(message)"
+        }
     }
 }

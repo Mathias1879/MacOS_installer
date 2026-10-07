@@ -202,3 +202,32 @@ func yesSkipsConfirmationForOrdinaryVolume() {
     #expect(VolumeGuard.requiresTypedConfirmation(yesFlag: true, verdict: .selectable) == false)
     #expect(VolumeGuard.requiresTypedConfirmation(yesFlag: false, verdict: .selectable) == true)
 }
+
+@Test("every refusal reason explains itself with something to do next")
+func refusalReasonsOfferNextSteps() {
+    let reasons: [VolumeGuard.RefusalReason] = [
+        .internalDisk,
+        .bootContainer,
+        .notMounted,
+        .wholeDisk,
+        .holdsProtectedPath("/Volumes/Work/caches/x.pkg"),
+        .tooSmall(capacityBytes: 8_000_000_000, requiredBytes: 20_000_000_000),
+    ]
+
+    for reason in reasons {
+        let explanation = reason.explanation
+        #expect(explanation.title.isEmpty == false, "\(reason) has no title")
+        #expect(explanation.whatToDoNext.isEmpty == false, "\(reason) offers nothing to do next")
+    }
+}
+
+@Test("the too-small refusal names both sizes in human units")
+func tooSmallNamesBothSizes() {
+    let reason = VolumeGuard.RefusalReason.tooSmall(
+        capacityBytes: 8_000_000_000, requiredBytes: 20_000_000_000
+    )
+
+    let rendered = reason.explanation.rendered()
+    #expect(rendered.contains("8.0 GB"))
+    #expect(rendered.contains("20.0 GB"))
+}

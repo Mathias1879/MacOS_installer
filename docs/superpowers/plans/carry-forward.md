@@ -61,9 +61,6 @@ against it.
 
 ## Not yet implemented from the spec
 
-- The three-part user-facing error format (what happened / what it means / what
-  to do next) and `~/Library/Logs/macos-installer/`. `ListCommand` currently
-  interpolates raw errors to stderr.
 - `docs/manual-verification.md`, the Tier 3 manual boot-test checklist. Correct
   to be absent now — there is nothing to boot-test until Plan 2 writes media —
   but it is a release blocker before any tag.
@@ -125,22 +122,119 @@ never reached even though it would satisfy the request.
 
 ## Carried from Plan 2's final review
 
-**The deadlock test has no time limit.** `CommandRunnerTests.doesNotDeadlockWhenChildFloodsStderr` spawns a real child that floods stderr. It passes in ~0.1s, but if the concurrent pipe drain in `RealCommandRunner` ever regresses, the test HANGS rather than failing. Add a Swift Testing `.timeLimit(.minutes(1))` trait whenever Plan 3 touches that file, so a regression fails cleanly.
-
-**The residual path-vs-UUID window is irreducible and currently undocumented in code.**
-`createinstallmedia --volume <mountPoint>` addresses a PATH, while every guard binds a UUID. Between `InstallMediaWriter` reading `volume.mountPoint` and `createinstallmedia` resolving that path, an unmount-plus-remount of a same-named volume at the same path would erase the wrong drive. It is one exec wide and cannot be closed without an Apple API that takes a volume UUID. It is real on any machine with two same-named volumes — this development machine has two called "Untitled". State it in a comment on `InstallMediaWriter.write` and in the README's safety section.
-
-**Spec items still unimplemented after Plan 2:**
-- Network retry with backoff. `Downloader.download` makes exactly one attempt; the spec asks for retry with backoff.
-- Re-download once on digest mismatch. The code deletes the bad package and fails, deferring the retry to the user's next invocation; the spec asks for one automatic retry.
-- `~/Library/Logs/macos-installer/`. Absent. For `writeFailedDriveStateUnknown` this is the one artifact worth keeping — the argv, exit status and stderr behind a possibly-ruined drive currently exist only in terminal scrollback. Highest-value item for Plan 3.
-
-**Two error formatters with one responsibility.** `MediaWriteErrorFormatter` hand-writes "Nothing was written." into five of six cases while `PreparationErrorFormatter` appends a shared constant. Same guarantee, two mechanisms. Plan 3's three-part error format (what happened / what it means / what to do next) is the right moment to introduce one structured user-facing error type and port all six producers of user text to it: `VolumeGuard.RefusalReason.userMessage`, `InstallerPreparationError.userMessage`, both error formatters, and both table formatters.
-
-**`InstallerPreparer` is misfiled.** It lives in `Assembly/` but is an orchestrator, not an `AssemblyStrategy`. Move it beside `Download/` or into its own `Pipeline/` directory.
-
 **`AssemblyStrategy` is not actually used as a strategy.** `InstallerPreparer.prepare` switches on `release.payload` itself and throws for legacy, while holding one injected assembler. Plan 4 cannot simply drop in a `LegacyESDAssembler`: it must convert that switch into strategy selection, and `downloadAndAssemble` hardcodes a single-file `InstallAssistant-<build>.pkg` download that the chunked legacy layout will not fit.
 
-**`"%.1f GB"` is duplicated** in `VolumeGuard` and `VolumeTableFormatter`.
-
 **Time Machine detection is near-dead code.** Modern Time Machine volumes are rarely *named* "time machine", so the name-matching rule almost certainly never fires in practice. Do not count that warning as a shipped control until it keys on `APFSVolumeRole == "Backup"`.
+
+## Carried from Plan 3, Task 4 (structured user-facing errors)
+
+**`RefusalReason.userMessage` and `.explanation` are hand-copied prose that can drift.**
+`VolumeGuard` now carries both a one-line table-cell string and a three-part explanation for each
+refusal. Verified consistent today, and nothing couples them — `refusalReasonsHaveMessages` and
+`refusalReasonsOfferNextSteps` each test their own property in isolation. Deliberately NOT coupled:
+making a table cell and a three-part report share a source risks wording that suits neither. Revisit
+only if they actually diverge.
+
+**`DigestError.mismatch` and `DownloadError.sizeMismatch` assert the bad file "has been deleted"
+while the deletion is best-effort `try?`** (`InstallerPreparer.swift:135,152`). Wording inherited
+verbatim from the deleted `PreparationErrorFormatter`, not introduced by Plan 3. The honest fix
+threads the deletion outcome into the case signature, churning the enum and its tests for a low-harm
+case: if deletion fails, the next run simply fails again with the same clear message. Fix if the
+enum is being reshaped anyway.
+
+**`DiskEnumeratorError.listFailed` reaches `explain()`'s generic fallback.** Deliberate — `diskutil
+list` failing outright IS unexpected, so "a gap in the tool" is honest for it. Listed so a future
+reviewer does not read it as an oversight alongside the three refusal types that WERE conformed.
+
+**`MediaWriteError.explanation` (~80 lines) and `RefusalReason.explanation` (~67) exceed the 50-line
+function guideline.** Accepted exception: one switch per type with verbose per-case literals.
+Splitting would hurt readability. Recorded so the final review does not re-raise it.
+
+**Two error-message surfaces now exist per type and only one is exhaustiveness-guarded by default.**
+The `exhaustivelyCheck*` helper pattern (an exhaustive `switch` with no `default`, called from the
+test so the compiler checks it) is the project's answer to hand-maintained sample arrays silently
+shipping gaps. It was proven necessary empirically: a new enum case with a dishonest explanation
+passed a green suite before the helpers existed. ANY new test that samples enum cases by hand must
+carry one.
+
+## Carried from Plan 3, Tasks 5-6 (walkthrough content)
+
+**Warning about sleep is the weaker half of the fix — the tool could prevent it.** The guidance now
+tells the user to keep the drive plugged in and the Mac awake for the whole 30-60 minute unattended
+window, because the erase happens at the END of it. Wrapping the long operation in `caffeinate`
+would remove the failure mode instead of describing it. New behaviour and a new process invocation,
+so it was out of scope for a wording fix.
+
+**`TargetMacPicker`'s help is unbounded.** Asking "?" does not consume an attempt, by design, so a
+non-interactive caller piping "?" endlessly never terminates (it does exit on EOF). Unreachable
+interactively — a human typing "?" forever is making a choice. A separate generous help cap would
+close it if it ever matters.
+
+**The test target now depends on the `macos-installer` executable target** (`Package.swift`), so
+`TargetMacPicker`'s retry/help loop can be tested via `@testable import macos_installer`. Internal
+only. The alternative — moving the picker into the library — would put bare `print(...)` calls inside
+`MacOSInstallerKit`, because the injected closure is NAMED `print` and shadows the global, which
+would make the project's no-print grep guard unreliable. Keep the picker in the executable.
+
+**A plan's sample code carries the plan author's factual errors with the authority of a spec.**
+Task 5 spent THREE fix rounds on facts that were wrong in the plan, not in the implementation: an
+assertion that all three boot methods differ (two Intel generations share one), a year-based T2
+heuristic (no model year predicts T2 status), and "Controller" written as the only System Information
+label (Apple's own article says "either Controller or iBridge, depending on the version of macOS").
+Task 6 added two more: a "2018 and later" T2 claim, and an assertion that the target Mac needs
+internet to install (Apple's article says nothing of the kind and the whole point is an offline
+installer). For Plan 4: fact-check the plan's own user-facing strings against primary sources BEFORE
+dispatch, and check them against earlier tasks' findings too — external verification does not catch
+internal contradiction.
+
+## Carried from Plan 3, Task 8
+
+**Hard-failure messages go to stdout, not stderr.** `CreateCommand` prints every fatal message with
+`print()` — "Pick one with --version", "Names did not match", the non-interactive target failure, the
+export failure explanation, and the top-level `explain()` output. Only `warn()` uses stderr. A user
+redirecting stdout to a file sees none of the failures. This is a consistent codebase-wide convention
+rather than a Task 8 defect, so changing it means touching every exit site in one deliberate pass and
+deciding the rule: errors and warnings to stderr, guidance and progress to stdout.
+
+**`CreateCommand.execute()` is the orchestration bottleneck.** Both sequencing defects this plan hit —
+the Before stage printing after volume enumeration, and the During stage claiming the password prompt
+comes first when it comes third — are properties of this one function's order of operations. It is
+excluded from coverage by design, which means ordering is the one thing reviews must read by eye.
+Keep it short enough to read as a sequence.
+
+## Carried from Plan 3, Task 9 — a missing precheck found from the environment, not the code
+
+**Nothing validates free space on the HOST before downloading.** `VolumeGuard` checks the TARGET
+volume's capacity against the installer size plus 2 GB headroom. No equivalent check exists for the
+machine running the command, where `InstallAssistant.pkg` (~15 GB for a modern release) downloads
+into the cache directory and `installer` then expands it into an `Install macOS *.app` of comparable
+size — so roughly 30 GB of host free space is needed and never verified.
+
+Found because the development machine was sitting at 1.4 GiB free of 228 GiB (APFS container 0.6%
+free) during Task 9, which produced repeated transient ENOSPC failures in the agent's own shell.
+
+Why it matters more than an ordinary missing check: the failure lands AFTER the user has typed their
+drive's name to confirm erasure. The sequence is target question → Before stage → volume selection →
+TYPED CONFIRMATION → 8-60 minute download → ENOSPC. The user has already committed, waited, and then
+gets a disk-full error for a condition knowable in the first second.
+
+The fix is a precheck before the confirmation: compare free space at `CatalogCache.defaultDirectory`
+against the release's `sizeBytes` plus room for the expanded app, and refuse early with a message
+naming how much is needed and how much is free. It belongs with the other guards, not in the download
+path, because the point is to fail BEFORE the user commits.
+
+## Carried from Plan 3's closing re-review
+
+**The During stage promises a digest check that does not always happen.** `duringSteps(for:
+.needsDownload)` unconditionally lists "The download is checked to make sure it arrived intact", but
+`InstallerPreparer.verifyDigestIfPresent` returns immediately — printing nothing — when
+`release.digest` is nil, which happens when Apple's catalog entry carries no `Digest` for that
+package. It is a real, tested path, not hypothetical. This is the same defect shape as the During
+stage's payload problem: guidance describing a step the code may skip. Fixing it means threading a
+digest-present signal into `duringSteps`, so it deserves its own pass rather than a wording patch.
+
+**Manual-verification item 18 cannot verify what C1 fixed.** It checks that the Before stage prints
+before the typed confirmation — print ordering. It never asks the tester to plug a drive in DURING
+the new "press Return" wait and confirm that drive then appears in the listing, which is the entire
+point of the acknowledge phase and the only way to verify it end to end. The checklist is the release
+gate, so this belongs in it properly.

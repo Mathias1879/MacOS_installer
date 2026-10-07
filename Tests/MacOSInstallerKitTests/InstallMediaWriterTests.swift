@@ -6,14 +6,14 @@ private let diskutilPath = "/usr/sbin/diskutil"
 private let sudoPath = "/usr/bin/sudo"
 private let targetUUID = "9662C8FB-5D1F-4744-81E0-618FBC801198"
 
-private func infoPlist(id: String, mount: String, uuid: String = targetUUID) -> String {
+private func infoPlist(id: String, mount: String, uuid: String = targetUUID, name: String = "SanDisk Ultra") -> String {
     """
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
     <plist version="1.0">
     <dict>
       <key>DeviceIdentifier</key><string>\(id)</string>
-      <key>VolumeName</key><string>SanDisk Ultra</string>
+      <key>VolumeName</key><string>\(name)</string>
       <key>VolumeUUID</key><string>\(uuid)</string>
       <key>MountPoint</key><string>\(mount)</string>
       <key>Internal</key><false/>
@@ -55,6 +55,20 @@ private func stubSuccessfulAuthentication(on runner: FakeCommandRunner) {
     runner.stub(standardOutput: "", for: "\(sudoPath) -v")
 }
 
+/// Stubs the post-write re-resolution `InstallMediaWriter.write` performs
+/// (C4) once `createinstallmedia` has exited zero — `diskutil info -plist
+/// <expectedDeviceIdentifier>`, keyed by device identifier rather than by
+/// `targetUUID`, since that is what the write re-resolves by after the erase.
+/// A test that omits this stub still passes `write` itself (the fake's
+/// unstubbed response is a non-zero exit, which `try?` turns into `nil`
+/// rather than a thrown error) but gets `nil` back instead of a `Volume`.
+private func stubPostWriteResolution(on runner: FakeCommandRunner, deviceIdentifier: String, volumeName: String) {
+    runner.stub(
+        standardOutput: infoPlist(id: deviceIdentifier, mount: "/Volumes/\(volumeName)", name: volumeName),
+        for: "\(diskutilPath) info -plist \(deviceIdentifier)"
+    )
+}
+
 /// Thread-safe collector for progress messages. `progress` is `@Sendable`, so
 /// a plain captured `var` cannot be mutated from inside it; this mirrors
 /// FakeCommandRunner's own lock-protected, `@unchecked Sendable` style.
@@ -73,6 +87,40 @@ private final class MessageCollector: @unchecked Sendable {
     }
 }
 
+/// A single ordered timeline that both `progress(...)` calls and runner
+/// invocations append to, so a test can assert that one entry's INDEX
+/// precedes another's — an ordering property, not proximity within either
+/// source alone. Lock-protected for the same reason as `MessageCollector`:
+/// `progress` is `@Sendable`.
+private final class OrderedEventLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [String] = []
+
+    func record(_ entry: String) {
+        lock.lock(); defer { lock.unlock() }
+        entries.append(entry)
+    }
+
+    var entriesSoFar: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return entries
+    }
+}
+
+/// Wraps a `FakeCommandRunner`, logging each invocation's command line to a
+/// shared `OrderedEventLog` before delegating. This is the seam that lets a
+/// test fold runner invocations and `progress(...)` calls into one timeline
+/// instead of two separately-ordered lists that can't be compared by index.
+private struct LoggingCommandRunner: CommandRunner, Sendable {
+    let wrapped: FakeCommandRunner
+    let log: OrderedEventLog
+
+    func run(_ executable: String, _ arguments: [String]) throws -> CommandResult {
+        log.record(([executable] + arguments).joined(separator: " "))
+        return try wrapped.run(executable, arguments)
+    }
+}
+
 @Test("re-resolves the target by UUID and erases the mount point it reports")
 func resolvesThenWrites() throws {
     let runner = FakeCommandRunner()
@@ -81,19 +129,22 @@ func resolvesThenWrites() throws {
                 for: "\(diskutilPath) info -plist \(targetUUID)")
     runner.stub(standardOutput: "Install media now available at /Volumes/Install macOS Tahoe",
                 for: "\(sudoPath) \(createInstallMedia) --volume /Volumes/SanDisk Ultra --nointeraction")
+    stubPostWriteResolution(on: runner, deviceIdentifier: "disk5s1", volumeName: "Install macOS Tahoe")
 
     try InstallMediaWriter(runner: runner).write(
         installerApp: app, toVolumeWithUUID: targetUUID,
         expectedDeviceIdentifier: "disk5s1", progress: { _ in }
     )
 
-    // Authentication, then resolution, then the erase — never any other order.
-    #expect(runner.invocations.count == 3)
+    // Authentication, pre-erase resolution, the erase, then the post-erase
+    // re-resolution (C4) — never any other order.
+    #expect(runner.invocations.count == 4)
     #expect(runner.invocations[0].executable == sudoPath)
     #expect(runner.invocations[0].arguments == ["-v"])
     #expect(runner.invocations[1].arguments == ["info", "-plist", targetUUID])
     #expect(runner.invocations[2].executable == sudoPath)
     #expect(runner.invocations[2].arguments == [createInstallMedia, "--volume", "/Volumes/SanDisk Ultra", "--nointeraction"])
+    #expect(runner.invocations[3].arguments == ["info", "-plist", "disk5s1"])
 }
 
 @Test("authenticates with sudo before re-resolving the target")
@@ -104,6 +155,7 @@ func authenticatesBeforeResolving() throws {
                 for: "\(diskutilPath) info -plist \(targetUUID)")
     runner.stub(standardOutput: "ok",
                 for: "\(sudoPath) \(createInstallMedia) --volume /Volumes/SanDisk Ultra --nointeraction")
+    stubPostWriteResolution(on: runner, deviceIdentifier: "disk5s1", volumeName: "Install macOS Tahoe")
 
     try InstallMediaWriter(runner: runner).write(
         installerApp: app, toVolumeWithUUID: targetUUID,
@@ -194,6 +246,138 @@ func callsProgressBeforeErasing() throws {
 
     #expect(!collector.messages.isEmpty)
     #expect(collector.messages.allSatisfy { !$0.isEmpty })
+}
+
+/// C2 (second half) of the final fix round: `sudo -v` here is a SECOND,
+/// independent password prompt — `InstallAssistantAssembler` raises the
+/// first, for a downloaded release, but every release reaches this `sudo -v`
+/// regardless of how it was obtained. Sudo's default `timestamp_timeout` is
+/// 5 minutes and an ~18 GB install routinely exceeds it, so this prompt
+/// commonly appears with nothing printed in front of it. This pins that the
+/// progress call PRECEDES the `sudo -v` INVOCATION — the actual claim —
+/// rather than merely which message came first among messages, which stays
+/// green even if `progress(...)` were moved to run after `sudo -v` has
+/// already prompted.
+///
+/// MUTATION PROOF (round-3 Finding A): move the `progress(...)` call in
+/// `InstallMediaWriter.write` to just before `let volume = try
+/// resolve(uuid: uuid)` — i.e. after `sudo -v` has already run — and this
+/// assertion fails: the logged `sudo -v` entry's index comes before the
+/// logged progress entry's index instead of after it.
+@Test("announces that a password is needed before the sudo -v authentication check runs")
+func announcesPasswordNeedBeforeSudoDashV() throws {
+    let runner = FakeCommandRunner()
+    stubSuccessfulAuthentication(on: runner)
+    runner.stub(standardOutput: infoPlist(id: "disk5s1", mount: "/Volumes/SanDisk Ultra"),
+                for: "\(diskutilPath) info -plist \(targetUUID)")
+    runner.stub(standardOutput: "ok",
+                for: "\(sudoPath) \(createInstallMedia) --volume /Volumes/SanDisk Ultra --nointeraction")
+
+    let log = OrderedEventLog()
+    let loggingRunner = LoggingCommandRunner(wrapped: runner, log: log)
+
+    try InstallMediaWriter(runner: loggingRunner).write(
+        installerApp: app, toVolumeWithUUID: targetUUID,
+        expectedDeviceIdentifier: "disk5s1",
+        progress: { log.record("progress: \($0)") }
+    )
+
+    let events = log.entriesSoFar
+    let progressEntry = "progress: Writing the installer needs your password…"
+    let sudoDashVEntry = "\(sudoPath) -v"
+
+    guard let progressIndex = events.firstIndex(of: progressEntry) else {
+        Issue.record("expected '\(progressEntry)' to appear in the shared log; got \(events)")
+        return
+    }
+    guard let sudoDashVIndex = events.firstIndex(of: sudoDashVEntry) else {
+        Issue.record("expected '\(sudoDashVEntry)' to appear in the shared log; got \(events)")
+        return
+    }
+
+    // The ordering claim itself, by INDEX in one shared timeline — not by
+    // which message happened to be recorded first among progress messages.
+    #expect(progressIndex < sudoDashVIndex)
+}
+
+// MARK: - C4: success is observed, not just asserted from an exit code
+
+/// `write` re-resolves by `expectedDeviceIdentifier`, not by `uuid` — the
+/// erase gives the destination a new filesystem, which typically assigns it a
+/// new `VolumeUUID`, so the pre-erase UUID is not a safe thing to resolve by
+/// afterward. This pins that the device-identifier lookup is what actually
+/// happens, and that its result — not an assumption from `exitCode == 0` — is
+/// what `write` returns.
+@Test("returns the volume actually observed after a successful write, re-resolved by device identifier")
+func returnsObservedVolumeAfterSuccessfulWrite() throws {
+    let runner = FakeCommandRunner()
+    stubSuccessfulAuthentication(on: runner)
+    runner.stub(standardOutput: infoPlist(id: "disk5s1", mount: "/Volumes/SanDisk Ultra"),
+                for: "\(diskutilPath) info -plist \(targetUUID)")
+    runner.stub(standardOutput: "ok",
+                for: "\(sudoPath) \(createInstallMedia) --volume /Volumes/SanDisk Ultra --nointeraction")
+    stubPostWriteResolution(on: runner, deviceIdentifier: "disk5s1", volumeName: "Install macOS Tahoe")
+
+    let observed = try InstallMediaWriter(runner: runner).write(
+        installerApp: app, toVolumeWithUUID: targetUUID,
+        expectedDeviceIdentifier: "disk5s1", progress: { _ in }
+    )
+
+    #expect(observed?.volumeName == "Install macOS Tahoe")
+    #expect(observed?.deviceIdentifier == "disk5s1")
+}
+
+/// The exact scenario C4 exists for: `createinstallmedia` can exit zero while
+/// naming the result something other than what the catalog's release name
+/// would predict (e.g. Apple changes its own naming convention, or a
+/// pre-existing differently-named volume at that mount point was reused). The
+/// VALUE returned must be the real, differing name — not the expected one —
+/// so the caller can say so plainly instead of claiming success under a name
+/// that isn't real.
+@Test("returns the volume's real name even when it differs from what the release name would predict")
+func returnsRealNameEvenWhenItDiffersFromExpectation() throws {
+    let runner = FakeCommandRunner()
+    stubSuccessfulAuthentication(on: runner)
+    runner.stub(standardOutput: infoPlist(id: "disk5s1", mount: "/Volumes/SanDisk Ultra"),
+                for: "\(diskutilPath) info -plist \(targetUUID)")
+    runner.stub(standardOutput: "ok",
+                for: "\(sudoPath) \(createInstallMedia) --volume /Volumes/SanDisk Ultra --nointeraction")
+    // Apple's real output, not "Install macOS Tahoe" — the name a caller
+    // might otherwise have assumed from the release alone.
+    stubPostWriteResolution(on: runner, deviceIdentifier: "disk5s1", volumeName: "Install macOS Tahoe Beta")
+
+    let observed = try InstallMediaWriter(runner: runner).write(
+        installerApp: app, toVolumeWithUUID: targetUUID,
+        expectedDeviceIdentifier: "disk5s1", progress: { _ in }
+    )
+
+    #expect(observed?.volumeName == "Install macOS Tahoe Beta")
+}
+
+/// `createinstallmedia` exiting zero is not the same fact as this tool having
+/// observed the result — if the post-write lookup itself fails (the fake's
+/// unstubbed response here, a non-zero `diskutil info` exit), `write` must
+/// return `nil` rather than throw: the write itself genuinely succeeded, so
+/// turning an unconfirmable name into a thrown error would misreport a
+/// working installer as a failed run.
+@Test("returns nil, without throwing, when the volume cannot be re-resolved after a successful write")
+func returnsNilWhenPostWriteResolutionFails() throws {
+    let runner = FakeCommandRunner()
+    stubSuccessfulAuthentication(on: runner)
+    runner.stub(standardOutput: infoPlist(id: "disk5s1", mount: "/Volumes/SanDisk Ultra"),
+                for: "\(diskutilPath) info -plist \(targetUUID)")
+    runner.stub(standardOutput: "ok",
+                for: "\(sudoPath) \(createInstallMedia) --volume /Volumes/SanDisk Ultra --nointeraction")
+    // Deliberately no stub for "diskutil info -plist disk5s1": the fake's
+    // unstubbed response is a non-zero exit, standing in for a drive that
+    // disappeared or failed to remount in the instant right after the erase.
+
+    let observed = try InstallMediaWriter(runner: runner).write(
+        installerApp: app, toVolumeWithUUID: targetUUID,
+        expectedDeviceIdentifier: "disk5s1", progress: { _ in }
+    )
+
+    #expect(observed == nil)
 }
 
 @Test("aborts without erasing when the target has moved to a different device node")
@@ -325,5 +509,44 @@ func reportsWriteFailureUsingStdoutWhenStderrEmpty() {
             installerApp: app, toVolumeWithUUID: targetUUID,
             expectedDeviceIdentifier: "disk5s1", progress: { _ in }
         )
+    }
+}
+
+/// The counterpart to `reportsWriteFailure`: there, createinstallmedia
+/// launches and exits non-zero. Here, it never launches at all — the runner
+/// itself throws, the way a missing `sudo` or `createinstallmedia` binary
+/// would. This must surface as `writeToolDidNotLaunch`, not
+/// `writeFailedDriveStateUnknown`, and its explanation must say the drive was
+/// not touched, since nothing ever ran.
+@Test("reports that the installer tool did not launch, and the drive was not touched, when the runner throws")
+func reportsWriteToolDidNotLaunch() {
+    let runner = FakeCommandRunner()
+    stubSuccessfulAuthentication(on: runner)
+    runner.stub(standardOutput: infoPlist(id: "disk5s1", mount: "/Volumes/SanDisk Ultra"),
+                for: "\(diskutilPath) info -plist \(targetUUID)")
+    runner.throwError(
+        CommandError.launchFailed(executable: sudoPath, reason: "no such file"),
+        for: "\(sudoPath) \(createInstallMedia) --volume /Volumes/SanDisk Ultra --nointeraction"
+    )
+
+    do {
+        try InstallMediaWriter(runner: runner).write(
+            installerApp: app, toVolumeWithUUID: targetUUID,
+            expectedDeviceIdentifier: "disk5s1", progress: { _ in }
+        )
+        Issue.record("expected write(installerApp:) to throw")
+    } catch let error as MediaWriteError {
+        guard case .writeToolDidNotLaunch = error else {
+            Issue.record("expected .writeToolDidNotLaunch, got \(error)")
+            return
+        }
+        let rendered = error.explanation.rendered().lowercased()
+        #expect(
+            rendered.contains("not")
+                && (rendered.contains("erased") || rendered.contains("written") || rendered.contains("touched")),
+            "explanation must state the drive was not touched: \(rendered)"
+        )
+    } catch {
+        Issue.record("expected a MediaWriteError, but \(error) leaked out instead")
     }
 }
