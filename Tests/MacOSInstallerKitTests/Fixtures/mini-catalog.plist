@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Products</key>
+  <dict>
+    <key>142-16660</key>
+    <dict>
+      <key>PostDate</key><date>2026-09-14T17:22:22Z</date>
+      <key>Distributions</key>
+      <dict>
+        <key>English</key><string>https://swdist.apple.com/x/142-16660.English.dist</string>
+      </dict>
+      <key>Packages</key>
+      <array>
+        <dict>
+          <key>URL</key><string>https://swcdn.apple.com/x/InstallAssistant.pkg</string>
+          <key>Size</key><integer>15296950272</integer>
+        </dict>
+      </array>
+    </dict>
+    <key>061-26578</key>
+    <dict>
+      <key>PostDate</key><date>2019-10-23T00:00:00Z</date>
+      <key>Distributions</key>
+      <dict>
+        <key>English</key><string>https://swdist.apple.com/x/061-26578.English.dist</string>
+      </dict>
+      <key>Packages</key>
+      <array>
+        <dict>
+          <key>URL</key><string>https://swcdn.apple.com/x/InstallESDDmg.pkg</string>
+          <key>Size</key><integer>8000000000</integer>
+        </dict>
+        <dict>
+          <key>URL</key><string>https://swcdn.apple.com/x/InstallInfo.plist</string>
+          <key>Size</key><integer>1024</integer>
+        </dict>
+      </array>
+    </dict>
+    <key>041-99999</key>
+    <dict>
+      <key>PostDate</key><date>2024-01-01T00:00:00Z</date>
+      <key>Packages</key>
+      <array>
+        <dict>
+          <key>URL</key><string>https://swcdn.apple.com/x/SomeSecurityUpdate.pkg</string>
+          <key>Size</key><integer>500000</integer>
+        </dict>
+      </array>
+    </dict>
+  </dict>
+</dict>
+</plist>

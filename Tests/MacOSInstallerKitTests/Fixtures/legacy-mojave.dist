@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <pkg-ref id="MajorOSInfo" packageIdentifier="com.apple.pkg.MajorOSInfo"/>
+    <title>SU_TITLE</title>
+    <options customize="never" require-scripts="false"/>
+    <auxinfo>
+        <dict>
+            <key>BUILD</key>
+            <string>18F2059</string>
+            <key>VERSION</key>
+            <string>10.14.5</string>
+        </dict>
+    </auxinfo>
+    <localization>
+        <strings language="English">"SU_TITLE" = "macOS Mojave";
+"SU_VERS" = "10.14.5";
+"SU_SERVERCOMMENT" = "For Desktop and Server systems";
+</strings>
+    </localization>
+</installer-gui-script>

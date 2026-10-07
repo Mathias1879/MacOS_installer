@@ -222,7 +222,7 @@ is confined to one file rather than spread as version checks throughout.
                                              for Install macOS *.app
 
            merge + dedupe by (version, build)
-           precedence: local > sucatalog > softwareupdate
+           precedence (dedupe only): local > sucatalog > softwareupdate
                     │
                     ▼
      target Mac picker → BEFORE guidance → version picker
@@ -238,7 +238,10 @@ is confined to one file rather than spread as version checks throughout.
 ```
 
 Catalog responses cache to `~/Library/Caches/macos-installer/` with a 24-hour
-TTL. Local installers sort first so re-flashing a drive requires no download.
+TTL. Precedence governs deduplication only: when two sources offer the same
+version and build, the local copy wins so re-flashing a drive requires no
+download. Display order is independent of origin — newest version first,
+regardless of which source it came from.
 
 ## Safety Model
 

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>macOS Sonoma</title>
+    <auxinfo>
+        <dict>
+            <key>VERSION</key>
+            <string>14.7</string>
+        </dict>
+    </auxinfo>
+</installer-gui-script>
