@@ -4,6 +4,10 @@ A macOS command-line tool that finds a requested version of macOS, downloads
 it from Apple, and writes a bootable offline installer to a USB drive or
 other external volume.
 
+> **Picking this up after a break, or on a different machine?** Start with
+> [`docs/HANDOFF.md`](docs/HANDOFF.md) — current state, what to do next, and the
+> environment gotchas that will otherwise cost you an hour.
+
 This repository implements **version discovery** and **media creation**.
 
 Version discovery finds every macOS version available to write, from three
