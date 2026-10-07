@@ -88,3 +88,19 @@ func dropsPackageWithMissingSize() throws {
     // The sole package is unusable, so the product is not an installer at all.
     #expect(products.isEmpty)
 }
+
+@Test("captures Apple's published digest for the installer package")
+func capturesDigest() throws {
+    let products = try SucatalogClient.parse(catalogFixture())
+    let modern = try #require(products.first { $0.identifier == "142-16660" })
+
+    #expect(modern.installAssistantDigest == "01e1be1b5ea751633fdeb70c3824e56b76d2cf1a")
+}
+
+@Test("a package with no published digest yields nil rather than an empty string")
+func absentDigestIsNil() throws {
+    let products = try SucatalogClient.parse(catalogFixture())
+    let legacy = try #require(products.first { $0.identifier == "061-26578" })
+
+    #expect(legacy.packages.allSatisfy { $0.digest == nil })
+}

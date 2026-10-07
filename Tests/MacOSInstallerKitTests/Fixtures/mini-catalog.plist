@@ -16,6 +16,7 @@
         <dict>
           <key>URL</key><string>https://swcdn.apple.com/x/InstallAssistant.pkg</string>
           <key>Size</key><integer>15296950272</integer>
+          <key>Digest</key><string>01e1be1b5ea751633fdeb70c3824e56b76d2cf1a</string>
         </dict>
       </array>
     </dict>

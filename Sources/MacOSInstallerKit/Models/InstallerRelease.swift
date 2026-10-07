@@ -35,6 +35,7 @@ public struct InstallerRelease: Equatable, Sendable {
     public let sizeBytes: Int64
     public let origin: Origin
     public let payload: Payload
+    public let digest: String?
 
     public init(
         name: String,
@@ -42,7 +43,8 @@ public struct InstallerRelease: Equatable, Sendable {
         build: String,
         sizeBytes: Int64,
         origin: Origin,
-        payload: Payload
+        payload: Payload,
+        digest: String? = nil
     ) {
         self.name = name
         self.version = version
@@ -50,6 +52,7 @@ public struct InstallerRelease: Equatable, Sendable {
         self.sizeBytes = sizeBytes
         self.origin = origin
         self.payload = payload
+        self.digest = digest
     }
 
     public var identity: ReleaseIdentity {

@@ -3,6 +3,7 @@ import Foundation
 public struct CatalogPackage: Equatable, Sendable {
     public let url: URL
     public let size: Int64
+    public let digest: String?
 }
 
 public struct CatalogProduct: Equatable, Sendable {
@@ -25,6 +26,12 @@ public struct CatalogProduct: Equatable, Sendable {
 
     public var installAssistantURL: URL? {
         packages.first { $0.url.lastPathComponent == Self.installAssistantFilename }?.url
+    }
+
+    /// Apple's published SHA-1 for the InstallAssistant package, when present.
+    /// Transport integrity only — see DigestVerifier.
+    public var installAssistantDigest: String? {
+        packages.first { $0.url.lastPathComponent == Self.installAssistantFilename }?.digest
     }
 
     public var legacyESDURLs: [URL] {

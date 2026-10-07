@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>DeviceIdentifier</key><string>disk3s1s1</string>
+  <key>VolumeName</key><string>Macintosh HD</string>
+  <key>VolumeUUID</key><string>DE969922-CD33-4FA5-8020-DD5AE91CAF5C</string>
+  <key>MountPoint</key><string>/</string>
+  <key>Internal</key><true/>
+  <key>Ejectable</key><false/>
+  <key>BusProtocol</key><string>Apple Fabric</string>
+  <key>APFSContainerReference</key><string>disk3</string>
+  <key>ParentWholeDisk</key><string>disk3</string>
+  <key>WholeDisk</key><false/>
+  <key>Size</key><integer>245107195904</integer>
+</dict>
+</plist>
