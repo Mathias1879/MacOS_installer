@@ -1,8 +1,42 @@
 # Handoff — where this project stands
 
-Last updated: 2026-10-07, after Plan 3 (guided walkthrough) was completed and PR #3 opened.
+Last updated: 2026-10-31, after Plan 4 (legacy ESD) was written and the user approved it. Paused before
+execution.
 
 Read this first if you are picking the project up after a break, or on a different machine.
+
+---
+
+## ▶ Resume here (2026-10-31)
+
+**Where it stopped:** Plan 4 is written, self-reviewed and approved by the user: "Looks good". Not one task
+has started. **Next action:** execute `docs/superpowers/plans/2026-10-31-legacy-esd.md` with
+`superpowers:subagent-driven-development` (recommended for its interlocking interfaces and three
+safety-critical gates; the user hadn't confirmed the method yet, so ask). Work on branch `legacy-esd`,
+which is stacked on `guided-walkthrough` and pushed to GitHub and Gitea.
+
+**Read before Task 1:** the plan's "Spike results" section. It holds eight facts verified against Apple's
+live catalog that settle every question the old "time-boxed spike" was going to answer. Do not re-run the spike.
+
+**The most important finding is a bug in already-built code, not just a Plan 4 gap.** `DigestVerifier`
+SHA-1s the whole downloaded file, but the catalog `Digest` is the SHA-1 of the xar archive's
+**compressed table of contents**. That was confirmed for modern `InstallAssistant.pkg` (product 142-50020)
+as well as the three legacy parts. As shipped, every real `create` would fail verification twice
+(~36 GB downloaded) and abort. Plan 4 Task 1 fixes it. **Do not run manual-verification rows 1–2 on
+`guided-walkthrough` before Task 1 lands;** they would fail for this reason alone.
+
+**Where things are:**
+- Prior art: macUSB (Kruszoneq/macUSB, MIT, © 2025-2026 Krystian Pierz), installed at
+  `/Volumes/Untitled/APPLICATIONS/macUSB.app` (v2.6). Its `MacOSAssemblyLegacyFlow.swift` is the source
+  of the port, and the plan records every deliberate deviation.
+- Spike artifacts are in `.superpowers/spike/` (gitignored, ~500 MB; this machine only):
+  `InstallAssistantAuto.pkg` and `RecoveryHDMetaDmg.pkg` for 001-68446, plus the `expanded/` tree.
+  These are safe to delete. Task 1's fixture is re-fetched with `curl -r 0-8191` per the plan, so it
+  doesn't depend on them.
+- This Mac is an **Apple M4 without Rosetta**. That is what Task 3's refusal is for. Install Rosetta
+  (`softwareupdate --install-rosetta --agree-to-license`) only when running manual rows 24/25.
+- Host free space was 35 GiB on 2026-10-31, up from 1.4 GiB. A real legacy `create` needs ~9 GB, a
+  modern one ~30 GB.
 
 ---
 
