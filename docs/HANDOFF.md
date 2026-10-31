@@ -21,6 +21,7 @@ Nothing is merged. The branches stack, and each PR targets the one below it:
 | [#1](https://github.com/Mathias1879/MacOS_installer/pull/1) | `version-discovery` | `main` | Plan 1 — `list` every obtainable macOS release |
 | [#2](https://github.com/Mathias1879/MacOS_installer/pull/2) | `media-creation` | `version-discovery` | Plan 2 — download, guard, write bootable media |
 | [#3](https://github.com/Mathias1879/MacOS_installer/pull/3) | `guided-walkthrough` | `media-creation` | Plan 3 — the first-time-user walkthrough |
+| — (not opened yet) | `legacy-esd` | `guided-walkthrough` | Plan 4 — written and approved, **not executed**; the PR is opened in Plan 4 Task 8 |
 
 Review and merge **bottom-up**: #1, then #2, then #3. Merging out of order will produce confusing
 diffs, because each branch contains everything below it.
@@ -77,7 +78,8 @@ whole-branch review, but no human has read them.
 
 ### 3. Plan 4 — legacy ESD (Mojave and Catalina)
 
-Not written yet. Mojave and Catalina are **listed but not writable**: they use a chunked ESD payload
+**Superseded 2026-10-31. See "Resume here" at the top.** The plan is written, the spike is done, and the
+paragraphs below are kept only as history. Mojave and Catalina are **listed but not writable**: they use a chunked ESD payload
 whose assembly Apple does not document. **Plan 4 must open with a time-boxed spike** against a real
 Catalina product before any code is written, because the reassembly format is unknown.
 
